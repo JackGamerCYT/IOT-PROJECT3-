@@ -1,0 +1,22 @@
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Database SQLite (chống ghi đè DB tạm)
+*.db
+*.sqlite3
+
+# Virtual environments
+.venv/
+env/
+venv/
+
+# IDE settings
+.vscode/
+.idea/
+*.swp
+
+# OS generated files
+.DS_Store
+Thumbs.db
