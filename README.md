@@ -122,7 +122,6 @@ python main.py
 - `POST /api/chat` : Khung chat AI tự động truy vấn SQLite trả lời số liệu lịch sử & nhận lệnh điều khiển.
 
 ---
-New Features: Header( update 0.2)
 
 ## 👥 Thành viên Thực hiện
 
