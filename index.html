@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Vercel Dashboard</title>
+  <title>Smart Energy IoT - Realtime Dashboard</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- MQTT.js over WebSockets Secure -->
+  <!-- MQTT.js over WebSockets -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
@@ -17,8 +17,8 @@
     <!-- HEADER -->
     <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Năng Lượng & Quản Lý Tải Thông Minh</h1>
-        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Hệ thống IoT Vercel Cloud & HiveMQ Broker</p>
+        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Năng Lượng & Quản Lý Tải Realtime</h1>
+        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets</p>
       </div>
       <div class="flex items-center gap-3">
         <span class="text-sm text-slate-400">Trạng thái ESP32-S3:</span>
@@ -51,52 +51,75 @@
       </div>
     </div>
 
-    <!-- MAIN DASHBOARD CONTENT -->
+    <!-- MAIN CONTENT -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
-      <!-- BIỂU ĐỒ SỐNG CÔNG SUẤT -->
+      <!-- BIỂU ĐỒ SỐNG CÔNG SUẤT REALTIME -->
       <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700">
-        <h2 class="text-lg font-bold text-slate-200 mb-4">Đồ thị Công suất Thời gian thực (W)</h2>
-        <div class="relative h-72">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="text-lg font-bold text-slate-200">Đồ thị Công suất Realtime (W)</h2>
+          <span class="text-xs text-amber-400 bg-amber-500/10 px-3 py-1 rounded-md border border-amber-500/20">Cập nhật mỗi 1s</span>
+        </div>
+        <div class="relative h-80">
           <canvas id="powerChart"></canvas>
         </div>
       </div>
 
-      <!-- BẢNG ĐIỀU KHIỂN TẢI -->
+      <!-- BẢNG ĐIỀU KHIỂN NÚT BẤM ON / OFF RÕ RÀNG -->
       <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
         <h2 class="text-lg font-bold text-slate-200 border-b border-slate-700 pb-3">Điều Khiển Tải Từ Xa</h2>
         
         <!-- TẢI 1: QUẠT 12V (GPIO 12) -->
-        <div class="flex items-center justify-between bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
-          <div>
-            <p class="font-semibold text-slate-200">Tải 1: Quạt 12V</p>
-            <p class="text-xs text-emerald-400 mt-0.5">GPIO 12 • Ưu tiên Cao</p>
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700/60 space-y-3">
+          <div class="flex justify-between items-center">
+            <div>
+              <p class="font-semibold text-slate-200">Quạt 12V (GPIO 12)</p>
+              <p class="text-xs text-emerald-400">Ưu tiên Cao</p>
+            </div>
+            <span id="badge-fan" class="px-3 py-1 rounded-md text-xs font-bold bg-slate-700 text-slate-300">
+              OFF
+            </span>
           </div>
-          <button id="btn-fan" onclick="toggleLoad('fan')" class="px-5 py-2.5 rounded-lg font-bold text-sm bg-slate-700 text-slate-300 transition">
-            ---
-          </button>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="sendControl('fan', true)" class="py-2 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
+              BẬT (ON)
+            </button>
+            <button onclick="sendControl('fan', false)" class="py-2 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
+              TẮT (OFF)
+            </button>
+          </div>
         </div>
 
-        <!-- TẢI 2: ĐÈN LED MODULE 3 CHÂN (GPIO 13) -->
-        <div class="flex items-center justify-between bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
-          <div>
-            <p class="font-semibold text-slate-200">Tải 2: Đèn LED Module</p>
-            <p class="text-xs text-rose-400 mt-0.5">GPIO 13 • Ưu tiên Thấp (Sa thải)</p>
+        <!-- TẢI 2: ĐÈN LED MODULE (GPIO 13) -->
+        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700/60 space-y-3">
+          <div class="flex justify-between items-center">
+            <div>
+              <p class="font-semibold text-slate-200">Đèn LED (GPIO 13)</p>
+              <p class="text-xs text-rose-400">Ưu tiên Thấp (Sa thải)</p>
+            </div>
+            <span id="badge-led" class="px-3 py-1 rounded-md text-xs font-bold bg-slate-700 text-slate-300">
+              OFF
+            </span>
           </div>
-          <button id="btn-led" onclick="toggleLoad('led')" class="px-5 py-2.5 rounded-lg font-bold text-sm bg-slate-700 text-slate-300 transition">
-            ---
-          </button>
+          <div class="grid grid-cols-2 gap-2">
+            <button onclick="sendControl('led', true)" class="py-2 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
+              BẬT (ON)
+            </button>
+            <button onclick="sendControl('led', false)" class="py-2 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
+              TẮT (OFF)
+            </button>
+          </div>
         </div>
 
-        <!-- CẤU HÌNH NGƯỠNG PEAK & TỰ ĐỘNG -->
+        <!-- CẤU HÌNH NGƯỠNG PEAK -->
         <div class="pt-4 border-t border-slate-700 space-y-4">
           <div class="flex items-center justify-between">
-            <span class="text-sm text-slate-300">Chế độ Tự động (Auto Shedding):</span>
+            <span class="text-sm text-slate-300">Chế độ Tự động:</span>
             <input type="checkbox" id="chk-auto" onchange="changeAutoMode(this.checked)" checked class="w-5 h-5 accent-teal-500 cursor-pointer">
           </div>
 
           <div>
-            <label class="text-xs text-slate-400 block mb-1">Cài đặt Ngưỡng Công suất Đỉnh (W):</label>
+            <label class="text-xs text-slate-400 block mb-1">Cài đặt Ngưỡng Đỉnh (W):</label>
             <div class="flex gap-2">
               <input type="number" id="input-limit" value="15" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:outline-none focus:border-teal-500">
               <button onclick="updatePeakLimit()" class="bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs px-4 py-1.5 rounded-lg transition">
@@ -111,28 +134,32 @@
 
   </div>
 
-  <!-- SCRIPT WEBSOCKETS & CHART.JS -->
+  <!-- SCRIPT KẾT NỐI WEBSOCKETS VÀ CẬP NHẬT BIỂU ĐỒ REALTIME -->
   <script>
     let currentState = { fan: false, led: false, auto_mode: true, peak_limit: 15.0 };
 
+    // 1. KHỞI TẠO BIỂU ĐỒ CHART.JS LƯU 25 ĐIỂM DỮ LIỆU
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
       data: {
         labels: [],
         datasets: [{
-          label: 'Công suất (W)',
+          label: 'Công suất (Watts)',
           data: [],
           borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245, 158, 11, 0.1)',
+          backgroundColor: 'rgba(245, 158, 11, 0.15)',
           fill: true,
           tension: 0.3,
-          borderWidth: 2
+          borderWidth: 2,
+          pointRadius: 3,
+          pointBackgroundColor: '#fbbf24'
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        animation: false, // Tắt animation nặng để đồ thị nhảy mượt thời gian thực
         scales: {
           x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
           y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true }
@@ -141,12 +168,13 @@
       }
     });
 
+    // 2. KẾT NỐI WEBSOCKET SECURE TỚI HIVEMQ BROKER
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-      clientId: 'Vercel_Dashboard_Client_' + Math.random().toString(16).substr(2, 8)
+      clientId: 'Vercel_Dashboard_' + Math.random().toString(16).substr(2, 8)
     });
 
     client.on('connect', () => {
-      console.log('✅ Đã kết nối MQTT Broker HiveMQ thành công!');
+      console.log('✅ Đã kết nối MQTT Broker thành công!');
       client.subscribe('smartenergy/telemetry');
       client.subscribe('smartenergy/status');
     });
@@ -169,41 +197,45 @@
         const data = JSON.parse(payload);
         currentState = data;
 
+        // Cập nhật các giá trị thẻ số liệu
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-mode').innerText = data.auto_mode ? 'TỰ ĐỘNG' : 'THỦ CÔNG';
         document.getElementById('chk-auto').checked = data.auto_mode;
 
-        updateButtonUI('btn-fan', data.fan);
-        updateButtonUI('btn-led', data.led);
+        // Cập nhật Badge trạng thái ON / OFF
+        updateBadge('badge-fan', data.fan);
+        updateBadge('badge-led', data.led);
 
+        // CẬP NHẬT ĐỒ THỊ LIÊN TỤC TIME-SERIES
         const now = new Date().toLocaleTimeString('vi-VN');
-        if (chart.data.labels.length > 20) {
+        if (chart.data.labels.length >= 25) {
           chart.data.labels.shift();
           chart.data.datasets.data.shift();
         }
         chart.data.labels.push(now);
         chart.data.datasets.data.push(data.power);
-        chart.update();
+        chart.update(); // Đảm bảo gọi update liên tục
       }
     });
 
-    function updateButtonUI(btnId, state) {
-      const btn = document.getElementById(btnId);
-      if (state) {
-        btn.className = 'px-5 py-2.5 rounded-lg font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white transition';
-        btn.innerText = 'ĐANG BẬT';
+    function updateBadge(badgeId, isStateOn) {
+      const badge = document.getElementById(badgeId);
+      if (isStateOn) {
+        badge.className = 'px-3 py-1 rounded-md text-xs font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
+        badge.innerText = 'ON (ĐANG BẬT)';
       } else {
-        btn.className = 'px-5 py-2.5 rounded-lg font-bold text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition';
-        btn.innerText = 'ĐANG TẮT';
+        badge.className = 'px-3 py-1 rounded-md text-xs font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/40';
+        badge.innerText = 'OFF (ĐANG TẮT)';
       }
     }
 
-    function toggleLoad(loadType) {
+    // 3. GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32
+    function sendControl(deviceType, stateValue) {
       const command = {};
-      if (loadType === 'fan') command.fan = !currentState.fan;
-      if (loadType === 'led') command.led = !currentState.led;
+      if (deviceType === 'fan') command.fan = stateValue;
+      if (deviceType === 'led') command.led = stateValue;
       client.publish('smartenergy/control', JSON.stringify(command));
     }
 
