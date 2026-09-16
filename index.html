@@ -3,13 +3,29 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard</title>
+  <title>Smart Energy IoT - Realtime Dashboard & VS Code Terminal</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
   <!-- MQTT.js over WebSockets Secure -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+  <style>
+    /* Custom Scrollbar cho VS Code Terminal */
+    .terminal-scroll::-webkit-scrollbar {
+      width: 8px;
+    }
+    .terminal-scroll::-webkit-scrollbar-track {
+      background: #090d16;
+    }
+    .terminal-scroll::-webkit-scrollbar-thumb {
+      background: #1e293b;
+      border-radius: 4px;
+    }
+    .terminal-scroll::-webkit-scrollbar-thumb:hover {
+      background: #334155;
+    }
+  </style>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
   <div class="max-w-6xl mx-auto space-y-6">
@@ -18,7 +34,7 @@
     <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
       <div>
         <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Dòng Điện & Công Suất Realtime</h1>
-        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets</p>
+        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets & Terminal Log</p>
       </div>
       <div class="flex items-center gap-3">
         <span class="text-sm text-slate-400">Trạng thái ESP32-S3:</span>
@@ -62,7 +78,7 @@
             ⚡ Streaming Realtime 1s
           </span>
         </div>
-        <div class="relative h-80">
+        <div class="relative h-72">
           <canvas id="powerChart"></canvas>
         </div>
 
@@ -145,13 +161,42 @@
       </div>
     </div>
 
+    <!-- TERMINAL VS CODE STYLE LOG PANEL -->
+    <div class="bg-slate-950 rounded-2xl border border-slate-800 shadow-2xl overflow-hidden">
+      <!-- TERMINAL HEADER -->
+      <div class="bg-slate-900 px-4 py-2.5 border-b border-slate-800 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <div class="flex gap-1.5">
+            <span class="w-3 h-3 rounded-full bg-rose-500 inline-block"></span>
+            <span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
+            <span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
+          </div>
+          <span class="text-xs font-mono font-bold text-slate-300 ml-2">TERMINAL - ESP32-S3 REALTIME SERIAL LOGS</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
+            <input type="checkbox" id="chk-autoscroll" checked class="accent-teal-500 rounded">
+            <span>Auto-scroll</span>
+          </label>
+          <button onclick="clearTerminal()" class="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 px-2.5 py-1 rounded border border-slate-700 transition">
+            🧹 Xóa Terminal
+          </button>
+        </div>
+      </div>
+
+      <!-- TERMINAL CONTENT BOX -->
+      <div id="terminal-body" class="p-4 font-mono text-xs h-56 overflow-y-auto terminal-scroll bg-black/90 space-y-1 text-emerald-400 leading-relaxed">
+        <div class="text-slate-500">[SYSTEM] Khởi tạo Terminal VS Code... Sẵn sàng nhận logs từ MQTT Broker.</div>
+      </div>
+    </div>
+
   </div>
 
   <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME -->
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 3.0 };
 
-    // 1. KHỞI TẠO MẢNG THỜI GIAN
+    // 1. KHỞI TẠO MẢNG THỜI GIAN BAN ĐẦU
     const initialLabels = [];
     const initialPower = [];
     const initialCurrent = [];
@@ -236,6 +281,7 @@
 
     client.on('connect', () => {
       console.log('✅ Đã kết nối MQTT Broker thành công!');
+      logTerminal('SYSTEM', '🟢 Kết nối MQTT Broker broker.hivemq.com:8884 thành công!', 'text-emerald-400');
       client.subscribe(`${TOPIC_PREFIX}/telemetry`);
       client.subscribe(`${TOPIC_PREFIX}/status`);
     });
@@ -248,9 +294,11 @@
         if (payload === 'ONLINE') {
           badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
           badge.innerText = 'ONLINE';
+          logTerminal('STATUS', '⚡ ESP32-S3 Trạng thái: ONLINE', 'text-emerald-400 font-bold');
         } else {
           badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40';
           badge.innerText = 'OFFLINE';
+          logTerminal('STATUS', '⚠️ ESP32-S3 Trạng thái: OFFLINE', 'text-rose-400 font-bold');
         }
       }
 
@@ -281,7 +329,11 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // ĐẨY DỮ LIỆU THỰC TẾ VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (SỬA CHUẨN MẢNG DATASETS)
+        // IN LOG RA VS CODE TERMINAL DƯỚI BẢNG WEB
+        const logMsg = `[#${data.msg_id || 0}] Dòng RMS = ${data.current.toFixed(2)}A | Power = ${data.power.toFixed(2)}W | Raw ADC = ${data.raw_adc || '--'} | Vol = ${(data.voltage || 0).toFixed(2)}V | Fan: ${data.fan ? 'ON' : 'OFF'} | LED: ${data.led ? 'ON' : 'OFF'} | Mode: ${data.auto_mode ? 'AUTO' : 'MANUAL'}`;
+        logTerminal('DATA', logMsg, 'text-cyan-300');
+
+        // ĐẨY DỮ LIỆU VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (SỬA CHUẨN MẢNG DATASETS)
         pushDataToChart(data.power, data.current);
       }
     });
@@ -294,12 +346,12 @@
       if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
         chart.data.datasets.data.shift(); // SỬA CHUẨN: Xóa điểm Công suất (Dataset 0)
-        chart.data.datasets[3].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (Dataset 1)
+        chart.data.datasets[1].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (Dataset 1)
       }
       
       chart.data.labels.push(now);
       chart.data.datasets.data.push(powerVal);   // SỬA CHUẨN: Thêm điểm Công suất (Dataset 0)
-      chart.data.datasets[3].data.push(currentVal); // SỬA CHUẨN: Thêm điểm Dòng điện (Dataset 1)
+      chart.data.datasets[1].data.push(currentVal); // SỬA CHUẨN: Thêm điểm Dòng điện (Dataset 1)
       
       chart.update('none'); // VẼ LẠI KHUNG HÌNH TỨC THÌ MƯỢT MÀ
     }
@@ -315,23 +367,55 @@
       }
     }
 
-    // 4. GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32
+    // 4. GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32 & IN LOG TERMINAL
     function sendControl(deviceType, stateValue) {
       const command = {};
       if (deviceType === 'fan') command.fan = stateValue;
       if (deviceType === 'led') command.led = stateValue;
-      client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify(command));
+      const jsonStr = JSON.stringify(command);
+      client.publish(`${TOPIC_PREFIX}/control`, jsonStr);
+      logTerminal('CMD OUT', `📤 Đã gửi lệnh điều khiển: ${jsonStr}`, 'text-amber-300 font-bold');
     }
 
     function changeAutoMode(isAuto) {
-      client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ auto_mode: isAuto }));
+      const jsonStr = JSON.stringify({ auto_mode: isAuto });
+      client.publish(`${TOPIC_PREFIX}/control`, jsonStr);
+      logTerminal('CMD OUT', `📤 Đã chuyển Chế độ Auto: ${isAuto ? 'BẬT' : 'TẮT'}`, 'text-teal-300 font-bold');
     }
 
     function updatePeakLimit() {
       const val = parseFloat(document.getElementById('input-limit').value);
       if (val > 0) {
-        client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ peak_limit: val }));
+        const jsonStr = JSON.stringify({ peak_limit: val });
+        client.publish(`${TOPIC_PREFIX}/control`, jsonStr);
+        logTerminal('CMD OUT', `📤 Đã cập nhật Ngưỡng Đỉnh: ${val}W`, 'text-rose-300 font-bold');
       }
+    }
+
+    // 5. HÀM IN LOG RA VS CODE TERMINAL VÀ NỐI DÒNG MỚI
+    function logTerminal(tag, message, colorClass = 'text-green-400') {
+      const term = document.getElementById('terminal-body');
+      const timeStr = new Date().toLocaleTimeString('vi-VN');
+      const line = document.createElement('div');
+      line.className = `${colorClass} flex gap-2 hover:bg-slate-900/50 px-1 py-0.5 rounded`;
+      line.innerHTML = `<span class="text-slate-500 select-none">[${timeStr}]</span><span class="font-bold text-teal-400 select-none">[${tag}]</span> <span>${message}</span>`;
+      
+      term.appendChild(line);
+
+      // Giới hạn mảng tối đa 120 dòng log để tránh tràn bộ nhớ trình duyệt
+      while (term.children.length > 120) {
+        term.removeChild(term.firstChild);
+      }
+
+      // Tự động cuộn xuống dòng mới nhất nếu bật Auto-scroll
+      if (document.getElementById('chk-autoscroll').checked) {
+        term.scrollTop = term.scrollHeight;
+      }
+    }
+
+    function clearTerminal() {
+      const term = document.getElementById('terminal-body');
+      term.innerHTML = '<div class="text-slate-500">[SYSTEM] Terminal đã được dọn dẹp sạch.</div>';
     }
   </script>
 </body>
