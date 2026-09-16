@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard v8</title>
+  <title>Smart Energy IoT - Realtime Current & Power Dashboard</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
@@ -17,7 +17,7 @@
     <!-- HEADER -->
     <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Năng Lượng & Quản Lý Tải Realtime v8</h1>
+        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Dòng Điện & Công Suất Realtime</h1>
         <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets</p>
       </div>
       <div class="flex items-center gap-3">
@@ -54,13 +54,13 @@
     <!-- MAIN CONTENT -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
-      <!-- BIỂU ĐỒ SỐNG CÔNG SUẤT REALTIME -->
+      <!-- BIỂU ĐỒ SỐNG DÒNG ĐIỆN & CÔNG SUẤT REALTIME -->
       <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4">
         <div class="flex justify-between items-center">
-          <h2 class="text-lg font-bold text-slate-200">Đồ thị Công suất Realtime (Watts)</h2>
-          <button onclick="toggleTestWave()" id="btn-testwave" class="text-xs bg-slate-700 hover:bg-slate-600 text-amber-300 px-3 py-1.5 rounded-lg border border-slate-600 transition">
-            🧪 Chạy thử Đồ thị (Test Wave)
-          </button>
+          <h2 class="text-lg font-bold text-slate-200">Đồ thị Dòng điện (A) & Công suất (W) Thực tế</h2>
+          <span class="text-xs text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-md border border-emerald-500/20 font-mono">
+            ⚡ Streaming Realtime 1s
+          </span>
         </div>
         <div class="relative h-80">
           <canvas id="powerChart"></canvas>
@@ -68,12 +68,12 @@
 
         <!-- BẢNG CHẨN ĐOÁN DEBUG PHẦN CỨNG -->
         <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50 text-xs space-y-1 text-slate-400">
-          <p class="font-bold text-slate-300">🛠️ Bảng Chẩn Đoán Cảm Biến & Mạng:</p>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
-            <div>Raw ADC Pin 1: <span id="debug-adc" class="text-cyan-400 font-mono">--</span></div>
-            <div>Sensor Voltage: <span id="debug-vol" class="text-cyan-400 font-mono">-- V</span></div>
-            <div>Gói tin đã nhận: <span id="debug-msg" class="text-cyan-400 font-mono">0</span></div>
-            <div>MQTT Topic: <span class="text-emerald-400 font-mono">node9988</span></div>
+          <p class="font-bold text-slate-300">🛠️ Thông số Cảm biến ACS712 & Mạng MQTT:</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 font-mono">
+            <div>Raw ADC Pin 1: <span id="debug-adc" class="text-cyan-400">0</span></div>
+            <div>Voltage GPIO1: <span id="debug-vol" class="text-cyan-400">0.00 V</span></div>
+            <div>Gói tin đã nhận: <span id="debug-msg" class="text-cyan-400">0</span></div>
+            <div>Topic: <span class="text-emerald-400">node9988</span></div>
           </div>
         </div>
       </div>
@@ -147,49 +147,95 @@
 
   </div>
 
-  <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME -->
+  <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME (2 ĐƯỜNG: CURRENT & POWER) -->
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 15.0 };
-    let testWaveInterval = null;
 
-    // 1. KHỞI TẠO BIỂU ĐỒ CHART.JS (TẮT ANIMATION ĐỂ VẼ TỨC THÌ)
+    // 1. TẠO DỮ LIỆU BAN ĐẦU ĐỂ BIỂU ĐỒ NỔI TRỤC X/Y NGAY KHI VỪA MỞ TRANG
+    const initialLabels = [];
+    const initialPower = [];
+    const initialCurrent = [];
+    const nowTime = new Date();
+    for (let i = 14; i >= 0; i--) {
+      const t = new Date(nowTime.getTime() - i * 1000);
+      initialLabels.push(t.toLocaleTimeString('vi-VN'));
+      initialPower.push(0.0);
+      initialCurrent.push(0.0);
+    }
+
+    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS VỚI DUAL Y-AXIS (CÔNG SUẤT W & DÒNG ĐIỆN A)
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
       data: {
-        labels: [],
-        datasets: [{
-          label: 'Công suất (Watts)',
-          data: [],
-          borderColor: '#f59e0b',
-          backgroundColor: 'rgba(245, 158, 11, 0.15)',
-          fill: true,
-          tension: 0.2,
-          borderWidth: 2,
-          pointRadius: 4,
-          pointBackgroundColor: '#fbbf24'
-        }]
+        labels: initialLabels,
+        datasets: [
+          {
+            label: 'Công suất (Watts - W)',
+            data: initialPower,
+            borderColor: '#f59e0b', // Màu vàng cam
+            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            fill: true,
+            tension: 0.2,
+            borderWidth: 2,
+            pointRadius: 2,
+            yAxisID: 'yPower'
+          },
+          {
+            label: 'Dòng điện (Amperes - A)',
+            data: initialCurrent,
+            borderColor: '#06b6d4', // Màu xanh cyan
+            backgroundColor: 'rgba(6, 182, 212, 0.1)',
+            fill: false,
+            tension: 0.2,
+            borderWidth: 2,
+            pointRadius: 2,
+            yAxisID: 'yCurrent'
+          }
+        ]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false,
+        animation: false, // TẮT ANIMATION ĐỂ KHUNG HÌNH VẼ SỐNG TỨC THÌ
         scales: {
-          x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-          y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true, suggestedMax: 20 }
+          x: { 
+            grid: { color: '#334155' }, 
+            ticks: { color: '#94a3b8', font: { size: 10 } } 
+          },
+          yPower: {
+            type: 'linear',
+            position: 'left',
+            title: { display: true, text: 'Công suất (W)', color: '#f59e0b' },
+            grid: { color: '#334155' },
+            ticks: { color: '#f59e0b' },
+            beginAtZero: true,
+            suggestedMax: 20
+          },
+          yCurrent: {
+            type: 'linear',
+            position: 'right',
+            title: { display: true, text: 'Dòng điện (A)', color: '#06b6d4' },
+            grid: { drawOnChartArea: false }, // Không chồng lưới gây rối mắt
+            ticks: { color: '#06b6d4' },
+            beginAtZero: true,
+            suggestedMax: 2.0
+          }
         },
-        plugins: { legend: { labels: { color: '#e2e8f0' } } }
+        plugins: { 
+          legend: { labels: { color: '#e2e8f0', font: { weight: 'bold' } } } 
+        }
       }
     });
 
-    // 2. KẾT NỐI WEBSOCKET SECURE VỚI TOPIC ĐỘC QUYỀN
+    // 3. KẾT NỐI WEBSOCKET SECURE TỚI HIVEMQ BROKER (PORT 8884)
     const TOPIC_PREFIX = 'smartenergy_node9988';
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-      clientId: 'Vercel_Web_Dash_' + Math.random().toString(16).substr(2, 8)
+      clientId: 'Vercel_Dashboard_Real_' + Math.random().toString(16).substr(2, 8)
     });
 
     client.on('connect', () => {
-      console.log('✅ Đã kết nối MQTT Broker công khai thành công!');
+      console.log('✅ Đã kết nối MQTT Broker thành công!');
       client.subscribe(`${TOPIC_PREFIX}/telemetry`);
       client.subscribe(`${TOPIC_PREFIX}/status`);
     });
@@ -212,7 +258,7 @@
         const data = JSON.parse(payload);
         currentState = data;
 
-        // Cập nhật các thẻ số liệu
+        // Cập nhật các giá trị thẻ số liệu
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
@@ -235,20 +281,25 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // ĐẨY DỮ LIỆU LÊN BIỂU ĐỒ REALTIME
-        pushDataToChart(data.power);
+        // ĐẨY DỮ LIỆU CẢ 2 ĐƯỜNG (CURRENT & POWER) LÊN BIỂU ĐỒ REALTIME
+        pushDataToChart(data.power, data.current);
       }
     });
 
-    function pushDataToChart(powerVal) {
+    function pushDataToChart(powerVal, currentVal) {
       const now = new Date().toLocaleTimeString('vi-VN');
-      if (chart.data.labels.length >= 25) {
+      
+      // Giữ cố định 20 điểm dữ liệu thời gian mượt mà
+      if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
-        chart.data.datasets.data.shift();
+        chart.data.datasets.data.shift(); // Power
+        chart.data.datasets[1].data.shift(); // Current
       }
+      
       chart.data.labels.push(now);
-      chart.data.datasets.data.push(powerVal);
-      chart.update(); // VẼ LẠI KHUNG HÌNH MỚI TỨC THÌ
+      chart.data.datasets.data.push(powerVal);   // Nạp giá trị Watt
+      chart.data.datasets[1].data.push(currentVal); // Nạp giá trị Ampe
+      chart.update(); // VẼ LẠI BIỂU ĐỒ TỨC THÌ
     }
 
     function updateBadge(badgeId, isStateOn) {
@@ -262,7 +313,7 @@
       }
     }
 
-    // 3. GỬI LỆNH ĐIỀU KHIỂN
+    // 4. GỬI LỆNH ĐIỀU KHIỂN
     function sendControl(deviceType, stateValue) {
       const command = {};
       if (deviceType === 'fan') command.fan = stateValue;
@@ -278,25 +329,6 @@
       const val = parseFloat(document.getElementById('input-limit').value);
       if (val > 0) {
         client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ peak_limit: val }));
-      }
-    }
-
-    // CHẾ ĐỘ GIẢ LẬP SÓNG CHẠY THỬ BIỂU ĐỒ
-    function toggleTestWave() {
-      const btn = document.getElementById('btn-testwave');
-      if (testWaveInterval) {
-        clearInterval(testWaveInterval);
-        testWaveInterval = null;
-        btn.innerText = '🧪 Chạy thử Đồ thị (Test Wave)';
-        btn.className = 'text-xs bg-slate-700 hover:bg-slate-600 text-amber-300 px-3 py-1.5 rounded-lg border border-slate-600 transition';
-      } else {
-        btn.innerText = '⏹️ Dừng Chạy thử';
-        btn.className = 'text-xs bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded-lg transition';
-        testWaveInterval = setInterval(() => {
-          const simPower = (Math.random() * 12 + 4).toFixed(2); // Giả lập công suất từ 4W - 16W
-          document.getElementById('val-power').innerHTML = `${simPower} <span class="text-sm font-normal text-slate-400">W</span>`;
-          pushDataToChart(parseFloat(simPower));
-        }, 1000);
       }
     }
   </script>
