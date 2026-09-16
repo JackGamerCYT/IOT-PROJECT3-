@@ -47,7 +47,7 @@
 
       <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
         <p class="text-slate-400 text-xs font-semibold uppercase">Chế độ Sa thải tải</p>
-        <p id="val-mode" class="text-2xl font-bold text-emerald-400 mt-2">TỰ ĐỘNG</p>
+        <p id="val-mode" class="text-2xl font-bold text-slate-400 mt-2">THỦ CÔNG</p>
       </div>
     </div>
 
@@ -58,14 +58,14 @@
       <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700">
         <div class="flex justify-between items-center mb-4">
           <h2 class="text-lg font-bold text-slate-200">Đồ thị Công suất Realtime (W)</h2>
-          <span class="text-xs text-amber-400 bg-amber-500/10 px-3 py-1 rounded-md border border-amber-500/20">Cập nhật mỗi 1s</span>
+          <span class="text-xs text-amber-400 bg-amber-500/10 px-3 py-1 rounded-md border border-amber-500/20">Cập nhật liên tục 1s</span>
         </div>
         <div class="relative h-80">
           <canvas id="powerChart"></canvas>
         </div>
       </div>
 
-      <!-- BẢNG ĐIỀU KHIỂN NÚT BẤM ON / OFF RÕ RÀNG -->
+      <!-- BẢNG ĐIỀU KHIỂN THỦ CÔNG CÓ NÚT ON / OFF RÕ RÀNG -->
       <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
         <h2 class="text-lg font-bold text-slate-200 border-b border-slate-700 pb-3">Điều Khiển Tải Từ Xa</h2>
         
@@ -76,15 +76,15 @@
               <p class="font-semibold text-slate-200">Quạt 12V (GPIO 12)</p>
               <p class="text-xs text-emerald-400">Ưu tiên Cao</p>
             </div>
-            <span id="badge-fan" class="px-3 py-1 rounded-md text-xs font-bold bg-slate-700 text-slate-300">
-              OFF
+            <span id="badge-fan" class="px-3 py-1 rounded-md text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">
+              OFF (ĐANG TẮT)
             </span>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            <button onclick="sendControl('fan', true)" class="py-2 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
+            <button onclick="sendControl('fan', true)" class="py-2.5 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
               BẬT (ON)
             </button>
-            <button onclick="sendControl('fan', false)" class="py-2 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
+            <button onclick="sendControl('fan', false)" class="py-2.5 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
               TẮT (OFF)
             </button>
           </div>
@@ -97,15 +97,15 @@
               <p class="font-semibold text-slate-200">Đèn LED (GPIO 13)</p>
               <p class="text-xs text-rose-400">Ưu tiên Thấp (Sa thải)</p>
             </div>
-            <span id="badge-led" class="px-3 py-1 rounded-md text-xs font-bold bg-slate-700 text-slate-300">
-              OFF
+            <span id="badge-led" class="px-3 py-1 rounded-md text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">
+              OFF (ĐANG TẮT)
             </span>
           </div>
           <div class="grid grid-cols-2 gap-2">
-            <button onclick="sendControl('led', true)" class="py-2 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
+            <button onclick="sendControl('led', true)" class="py-2.5 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
               BẬT (ON)
             </button>
-            <button onclick="sendControl('led', false)" class="py-2 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
+            <button onclick="sendControl('led', false)" class="py-2.5 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
               TẮT (OFF)
             </button>
           </div>
@@ -114,8 +114,8 @@
         <!-- CẤU HÌNH NGƯỠNG PEAK -->
         <div class="pt-4 border-t border-slate-700 space-y-4">
           <div class="flex items-center justify-between">
-            <span class="text-sm text-slate-300">Chế độ Tự động:</span>
-            <input type="checkbox" id="chk-auto" onchange="changeAutoMode(this.checked)" checked class="w-5 h-5 accent-teal-500 cursor-pointer">
+            <span class="text-sm text-slate-300">Bật Chế độ Tự động (Auto):</span>
+            <input type="checkbox" id="chk-auto" onchange="changeAutoMode(this.checked)" class="w-5 h-5 accent-teal-500 cursor-pointer">
           </div>
 
           <div>
@@ -134,11 +134,11 @@
 
   </div>
 
-  <!-- SCRIPT KẾT NỐI WEBSOCKETS VÀ CẬP NHẬT BIỂU ĐỒ REALTIME -->
+  <!-- SCRIPT WEBSOCKETS VÀ CẬP NHẬT BIỂU ĐỒ REALTIME -->
   <script>
-    let currentState = { fan: false, led: false, auto_mode: true, peak_limit: 15.0 };
+    let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 15.0 };
 
-    // 1. KHỞI TẠO BIỂU ĐỒ CHART.JS LƯU 25 ĐIỂM DỮ LIỆU
+    // 1. KHỞI TẠO BIỂU ĐỒ CHART.JS KHÔNG CÓ ANIMATION TRỄ
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -150,7 +150,7 @@
           borderColor: '#f59e0b',
           backgroundColor: 'rgba(245, 158, 11, 0.15)',
           fill: true,
-          tension: 0.3,
+          tension: 0.2,
           borderWidth: 2,
           pointRadius: 3,
           pointBackgroundColor: '#fbbf24'
@@ -159,7 +159,7 @@
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false, // Tắt animation nặng để đồ thị nhảy mượt thời gian thực
+        animation: false, // TẮT ANIMATION ĐỂ BIỂU ĐỒ NHẢY THỜI GIAN THỰC TỨC THÌ
         scales: {
           x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
           y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true }
@@ -201,14 +201,22 @@
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
-        document.getElementById('val-mode').innerText = data.auto_mode ? 'TỰ ĐỘNG' : 'THỦ CÔNG';
+        
+        const modeElem = document.getElementById('val-mode');
+        if (data.auto_mode) {
+          modeElem.innerText = 'TỰ ĐỘNG';
+          modeElem.className = 'text-2xl font-bold text-emerald-400 mt-2';
+        } else {
+          modeElem.innerText = 'THỦ CÔNG';
+          modeElem.className = 'text-2xl font-bold text-slate-400 mt-2';
+        }
         document.getElementById('chk-auto').checked = data.auto_mode;
 
         // Cập nhật Badge trạng thái ON / OFF
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // CẬP NHẬT ĐỒ THỊ LIÊN TỤC TIME-SERIES
+        // CẬP NHẬT BIỂU ĐỒ SỐNG MỖI 1 GIÂY
         const now = new Date().toLocaleTimeString('vi-VN');
         if (chart.data.labels.length >= 25) {
           chart.data.labels.shift();
@@ -216,7 +224,7 @@
         }
         chart.data.labels.push(now);
         chart.data.datasets.data.push(data.power);
-        chart.update(); // Đảm bảo gọi update liên tục
+        chart.update(); // VẼ LẠI KHUNG HÌNH TỨC THÌ
       }
     });
 
