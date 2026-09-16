@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard</title>
+  <title>Smart Energy IoT - Realtime Dashboard v8</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
@@ -17,7 +17,7 @@
     <!-- HEADER -->
     <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Năng Lượng & Quản Lý Tải Realtime</h1>
+        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Năng Lượng & Quản Lý Tải Realtime v8</h1>
         <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets</p>
       </div>
       <div class="flex items-center gap-3">
@@ -55,17 +55,30 @@
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
       <!-- BIỂU ĐỒ SỐNG CÔNG SUẤT REALTIME -->
-      <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700">
-        <div class="flex justify-between items-center mb-4">
-          <h2 class="text-lg font-bold text-slate-200">Đồ thị Công suất Realtime (W)</h2>
-          <span class="text-xs text-amber-400 bg-amber-500/10 px-3 py-1 rounded-md border border-amber-500/20">Cập nhật liên tục 1s</span>
+      <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4">
+        <div class="flex justify-between items-center">
+          <h2 class="text-lg font-bold text-slate-200">Đồ thị Công suất Realtime (Watts)</h2>
+          <button onclick="toggleTestWave()" id="btn-testwave" class="text-xs bg-slate-700 hover:bg-slate-600 text-amber-300 px-3 py-1.5 rounded-lg border border-slate-600 transition">
+            🧪 Chạy thử Đồ thị (Test Wave)
+          </button>
         </div>
         <div class="relative h-80">
           <canvas id="powerChart"></canvas>
         </div>
+
+        <!-- BẢNG CHẨN ĐOÁN DEBUG PHẦN CỨNG -->
+        <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50 text-xs space-y-1 text-slate-400">
+          <p class="font-bold text-slate-300">🛠️ Bảng Chẩn Đoán Cảm Biến & Mạng:</p>
+          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1">
+            <div>Raw ADC Pin 1: <span id="debug-adc" class="text-cyan-400 font-mono">--</span></div>
+            <div>Sensor Voltage: <span id="debug-vol" class="text-cyan-400 font-mono">-- V</span></div>
+            <div>Gói tin đã nhận: <span id="debug-msg" class="text-cyan-400 font-mono">0</span></div>
+            <div>MQTT Topic: <span class="text-emerald-400 font-mono">node9988</span></div>
+          </div>
+        </div>
       </div>
 
-      <!-- BẢNG ĐIỀU KHIỂN THỦ CÔNG CÓ NÚT ON / OFF RÕ RÀNG -->
+      <!-- BẢNG ĐIỀU KHIỂN THỦ CÔNG ON / OFF -->
       <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
         <h2 class="text-lg font-bold text-slate-200 border-b border-slate-700 pb-3">Điều Khiển Tải Từ Xa</h2>
         
@@ -134,11 +147,12 @@
 
   </div>
 
-  <!-- SCRIPT WEBSOCKETS VÀ CẬP NHẬT BIỂU ĐỒ REALTIME -->
+  <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME -->
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 15.0 };
+    let testWaveInterval = null;
 
-    // 1. KHỞI TẠO BIỂU ĐỒ CHART.JS KHÔNG CÓ ANIMATION TRỄ
+    // 1. KHỞI TẠO BIỂU ĐỒ CHART.JS (TẮT ANIMATION ĐỂ VẼ TỨC THÌ)
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -152,37 +166,38 @@
           fill: true,
           tension: 0.2,
           borderWidth: 2,
-          pointRadius: 3,
+          pointRadius: 4,
           pointBackgroundColor: '#fbbf24'
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false, // TẮT ANIMATION ĐỂ KHUNG HÌNH NHẢY TỨC THÌ MỖI GIÂY
+        animation: false,
         scales: {
           x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
-          y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true }
+          y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true, suggestedMax: 20 }
         },
         plugins: { legend: { labels: { color: '#e2e8f0' } } }
       }
     });
 
-    // 2. KẾT NỐI WEBSOCKET SECURE TỚI HIVEMQ BROKER (PORT 8884)
+    // 2. KẾT NỐI WEBSOCKET SECURE VỚI TOPIC ĐỘC QUYỀN
+    const TOPIC_PREFIX = 'smartenergy_node9988';
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-      clientId: 'Vercel_Dashboard_' + Math.random().toString(16).substr(2, 8)
+      clientId: 'Vercel_Web_Dash_' + Math.random().toString(16).substr(2, 8)
     });
 
     client.on('connect', () => {
-      console.log('✅ Đã kết nối MQTT Broker thành công!');
-      client.subscribe('smartenergy/telemetry');
-      client.subscribe('smartenergy/status');
+      console.log('✅ Đã kết nối MQTT Broker công khai thành công!');
+      client.subscribe(`${TOPIC_PREFIX}/telemetry`);
+      client.subscribe(`${TOPIC_PREFIX}/status`);
     });
 
     client.on('message', (topic, message) => {
       const payload = message.toString();
 
-      if (topic === 'smartenergy/status') {
+      if (topic === `${TOPIC_PREFIX}/status`) {
         const badge = document.getElementById('status-badge');
         if (payload === 'ONLINE') {
           badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
@@ -193,11 +208,11 @@
         }
       }
 
-      if (topic === 'smartenergy/telemetry') {
+      if (topic === `${TOPIC_PREFIX}/telemetry`) {
         const data = JSON.parse(payload);
         currentState = data;
 
-        // Cập nhật các giá trị thẻ số liệu
+        // Cập nhật các thẻ số liệu
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
@@ -212,21 +227,29 @@
         }
         document.getElementById('chk-auto').checked = data.auto_mode;
 
-        // Cập nhật Badge trạng thái ON / OFF
+        // Cập nhật Debug Panel
+        if (data.raw_adc !== undefined) document.getElementById('debug-adc').innerText = data.raw_adc;
+        if (data.voltage !== undefined) document.getElementById('debug-vol').innerText = data.voltage.toFixed(2) + ' V';
+        if (data.msg_id !== undefined) document.getElementById('debug-msg').innerText = data.msg_id;
+
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // CẬP NHẬT BIỂU ĐỒ SỐNG MỖI 1 GIÂY
-        const now = new Date().toLocaleTimeString('vi-VN');
-        if (chart.data.labels.length >= 25) {
-          chart.data.labels.shift();
-          chart.data.datasets.data.shift();
-        }
-        chart.data.labels.push(now);
-        chart.data.datasets.data.push(data.power);
-        chart.update(); // CẬP NHẬT KHUNG HÌNH MỚI TỨC THÌ
+        // ĐẨY DỮ LIỆU LÊN BIỂU ĐỒ REALTIME
+        pushDataToChart(data.power);
       }
     });
+
+    function pushDataToChart(powerVal) {
+      const now = new Date().toLocaleTimeString('vi-VN');
+      if (chart.data.labels.length >= 25) {
+        chart.data.labels.shift();
+        chart.data.datasets.data.shift();
+      }
+      chart.data.labels.push(now);
+      chart.data.datasets.data.push(powerVal);
+      chart.update(); // VẼ LẠI KHUNG HÌNH MỚI TỨC THÌ
+    }
 
     function updateBadge(badgeId, isStateOn) {
       const badge = document.getElementById(badgeId);
@@ -239,22 +262,41 @@
       }
     }
 
-    // 3. GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32
+    // 3. GỬI LỆNH ĐIỀU KHIỂN
     function sendControl(deviceType, stateValue) {
       const command = {};
       if (deviceType === 'fan') command.fan = stateValue;
       if (deviceType === 'led') command.led = stateValue;
-      client.publish('smartenergy/control', JSON.stringify(command));
+      client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify(command));
     }
 
     function changeAutoMode(isAuto) {
-      client.publish('smartenergy/control', JSON.stringify({ auto_mode: isAuto }));
+      client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ auto_mode: isAuto }));
     }
 
     function updatePeakLimit() {
       const val = parseFloat(document.getElementById('input-limit').value);
       if (val > 0) {
-        client.publish('smartenergy/control', JSON.stringify({ peak_limit: val }));
+        client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ peak_limit: val }));
+      }
+    }
+
+    // CHẾ ĐỘ GIẢ LẬP SÓNG CHẠY THỬ BIỂU ĐỒ
+    function toggleTestWave() {
+      const btn = document.getElementById('btn-testwave');
+      if (testWaveInterval) {
+        clearInterval(testWaveInterval);
+        testWaveInterval = null;
+        btn.innerText = '🧪 Chạy thử Đồ thị (Test Wave)';
+        btn.className = 'text-xs bg-slate-700 hover:bg-slate-600 text-amber-300 px-3 py-1.5 rounded-lg border border-slate-600 transition';
+      } else {
+        btn.innerText = '⏹️ Dừng Chạy thử';
+        btn.className = 'text-xs bg-amber-600 hover:bg-amber-500 text-white font-bold px-3 py-1.5 rounded-lg transition';
+        testWaveInterval = setInterval(() => {
+          const simPower = (Math.random() * 12 + 4).toFixed(2); // Giả lập công suất từ 4W - 16W
+          document.getElementById('val-power').innerHTML = `${simPower} <span class="text-sm font-normal text-slate-400">W</span>`;
+          pushDataToChart(parseFloat(simPower));
+        }, 1000);
       }
     }
   </script>
