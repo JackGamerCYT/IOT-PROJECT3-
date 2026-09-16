@@ -8,7 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- MQTT.js over WebSockets -->
+  <!-- MQTT.js over WebSockets Secure -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
@@ -54,7 +54,7 @@
     <!-- MAIN DASHBOARD CONTENT -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       
-      <!-- BIỂU ĐỒ SỐNG CÔNG SUẤT (2 COLUMNS) -->
+      <!-- BIỂU ĐỒ SỐNG CÔNG SUẤT -->
       <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700">
         <h2 class="text-lg font-bold text-slate-200 mb-4">Đồ thị Công suất Thời gian thực (W)</h2>
         <div class="relative h-72">
@@ -62,7 +62,7 @@
         </div>
       </div>
 
-      <!-- BẢNG ĐIỀU KHIỂN TẢI CỤC BỘ (1 COLUMN) -->
+      <!-- BẢNG ĐIỀU KHIỂN TẢI -->
       <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
         <h2 class="text-lg font-bold text-slate-200 border-b border-slate-700 pb-3">Điều Khiển Tải Từ Xa</h2>
         
@@ -111,11 +111,10 @@
 
   </div>
 
-  <!-- SCRIPT KẾT NỐI REALTIME WEBSOCKETS & CHART.JS -->
+  <!-- SCRIPT WEBSOCKETS & CHART.JS -->
   <script>
     let currentState = { fan: false, led: false, auto_mode: true, peak_limit: 15.0 };
 
-    // 1. KHỞI TẠO BIỂU ĐỒ SỐNG VỚI CHART.JS
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -142,7 +141,6 @@
       }
     });
 
-    // 2. KẾT NỐI MQTT OVER WEBSOCKETS SECURE (WSS) ĐẾN HIVEMQ PUBLIC
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
       clientId: 'Vercel_Dashboard_Client_' + Math.random().toString(16).substr(2, 8)
     });
@@ -171,18 +169,15 @@
         const data = JSON.parse(payload);
         currentState = data;
 
-        // Cập nhật các thẻ giá trị
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-mode').innerText = data.auto_mode ? 'TỰ ĐỘNG' : 'THỦ CÔNG';
         document.getElementById('chk-auto').checked = data.auto_mode;
 
-        // Cập nhật giao diện nút bấm
         updateButtonUI('btn-fan', data.fan);
         updateButtonUI('btn-led', data.led);
 
-        // Cập nhật Biểu đồ sóng công suất
         const now = new Date().toLocaleTimeString('vi-VN');
         if (chart.data.labels.length > 20) {
           chart.data.labels.shift();
@@ -205,7 +200,6 @@
       }
     }
 
-    // 3. CÁC HÀM GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32
     function toggleLoad(loadType) {
       const command = {};
       if (loadType === 'fan') command.fan = !currentState.fan;
