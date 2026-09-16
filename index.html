@@ -1,9 +1,310 @@
+/*
+ * ====================================================================================
+ * DỰ ÁN IOT: GIÁM SÁT NĂNG LƯỢNG & QUẢN LÝ TẢI THÔNG MINH (VERSION V13 - FULL SERIAL LOG)
+ * VI ĐIỀU KHIỂN: ESP32-S3 (N16R8)
+ * 
+ * TÍNH NĂNG NỔI BẬT:
+ *  1. In nhật ký Serial Monitor đầy đủ, định kỳ mỗi 1s (Dòng RMS, Công suất, Raw ADC, Voltage, Relay).
+ *  2. Tự động Calib điểm 0 (Zero-offset) cho ACS712 khi khởi động.
+ *  3. Gửi Telemetry lên HiveMQ Cloud over Topic độc quyền: smartenergy_node9988/telemetry
+ *  4. Bật/Tắt thủ công Quạt (GPIO 12) và Đèn (GPIO 13) độc lập 100%.
+ *  5. Sửa dứt điểm lỗi biên dịch buffer C++ (Mảng char buffer[2]).
+ * ====================================================================================
+ */
+
+#include <WiFi.h>
+#include <PubSubClient.h>
+#include <ArduinoJson.h>
+
+// ======================================================
+// 1. CẤU HÌNH WIFI & CLOUD MQTT BROKER (HIVEMQ PUBLIC)
+// ======================================================
+const char* WIFI_SSID     = "HO TRO SINH VIEN";
+const char* WIFI_PASSWORD = "12345678@";
+
+const char* MQTT_BROKER   = "broker.hivemq.com";
+const int   MQTT_PORT     = 1883;
+
+// TOPIC ĐỘC QUYỀN TRÁNH TRÙNG LẶP TRÊN SERVER HIVEMQ CÔNG KHAI
+const char* CLIENT_ID       = "ESP32S3_SmartEnergy_Node_9988_v13";
+const char* TOPIC_TELEMETRY = "smartenergy_node9988/telemetry";
+const char* TOPIC_CONTROL   = "smartenergy_node9988/control";
+const char* TOPIC_STATUS    = "smartenergy_node9988/status";
+
+// ======================================================
+// 2. CHÂN KẾT NỐI PHẦN CỨNG (ESP32-S3 N16R8)
+// ======================================================
+const int PIN_ACS712     = 1;   // GPIO 1 (ADC1) đọc cảm biến ACS712 (Cấp nguồn 5V)
+const int PIN_RELAY_FAN  = 12;  // GPIO 12 Rơ-le Quạt 12V (IN1 - Active LOW)
+const int PIN_RELAY_LED  = 13;  // GPIO 13 Rơ-le Đèn LED Module (IN2 - Active LOW)
+
+// ======================================================
+// 3. BIẾN HỆ THỐNG & CALIB CẢM BIẾN
+// ======================================================
+float peak_limit = 3.0;        // Ngưỡng công suất đỉnh mặc định (W)
+float hysteresis = 0.5;        // Ngưỡng trễ khôi phục (W)
+bool auto_mode = false;        // Mặc định THỦ CÔNG 100% để làm chủ nút bấm trên Web
+
+bool fan_state = false;        // Trạng thái Quạt (false: TẮT, true: BẬT)
+bool led_state = false;        // Trạng thái Đèn LED (false: TẮT, true: BẬT)
+bool was_shed_by_auto = false; // Cờ đánh dấu: CHỈ BẬT LẠI NẾU BỊ TẮT DO SA THẢI TẢI
+
+float zero_voltage = 2.5;      // Điện áp điểm 0 (Vref) của ACS712
+int raw_adc_zero = 3100;       // ADC điểm 0 mặc định
+float current_rms = 0.0;
+float power_watts = 0.0;
+int raw_adc_val = 0;
+float sensor_voltage = 0.0;
+
+const float VOLTAGE_DC = 12.0; // Điện áp hệ thống DC 12V
+const float ACS712_SENSITIVITY = 0.185; // Độ nhạy ACS712-05B (185mV/A = 0.185V/A)
+
+WiFiClient espClient;
+PubSubClient mqttClient(espClient);
+unsigned long last_telemetry_time = 0;
+unsigned long msg_count = 0;
+
+// ======================================================
+// HÀM TỰ ĐỘNG CALIB ĐIỂM 0 (ZERO OFFSET) KHI KHỞI ĐỘNG
+// ======================================================
+void calibrateACS712Zero() {
+  Serial.println("\n------------------------------------------------");
+  Serial.println("⏳ Đang Calib điểm 0 cho ACS712...");
+  Serial.println("⚠️ VUI LÒNG GIỮ QUẠT & TẢI TẮT TRONG 2 GIÂY!");
+  long sum_raw = 0;
+  int num_samples = 500;
+  
+  for (int i = 0; i < num_samples; i++) {
+    sum_raw += analogRead(PIN_ACS712);
+    delayMicroseconds(200);
+  }
+  
+  raw_adc_zero = sum_raw / num_samples;
+  zero_voltage = (raw_adc_zero / 4095.0) * 3.3;
+  
+  Serial.print("✅ Calib hoàn tất! ADC Zero Baseline = ");
+  Serial.print(raw_adc_zero);
+  Serial.print(" | Điện áp Vref Zero = ");
+  Serial.print(zero_voltage, 3);
+  Serial.println(" V");
+  Serial.println("------------------------------------------------\n");
+}
+
+// ======================================================
+// HÀM ĐỌC DÒNG RMS VÀ CÔNG SUẤT TỪ ACS712 (ADC 12-bit)
+// ======================================================
+void readACS712() {
+  long sum_sq_diff = 0;
+  long sum_raw = 0;
+  int samples = 400;
+  
+  for (int i = 0; i < samples; i++) {
+    int raw = analogRead(PIN_ACS712);
+    sum_raw += raw;
+    int diff = raw - raw_adc_zero;
+    sum_sq_diff += (long)diff * diff;
+    delayMicroseconds(100);
+  }
+  
+  raw_adc_val = sum_raw / samples;
+  sensor_voltage = (raw_adc_val / 4095.0) * 3.3;
+  
+  float rms_adc_diff = sqrt((float)sum_sq_diff / samples);
+  float rms_voltage_diff = (rms_adc_diff / 4095.0) * 3.3;
+  
+  // Tính dòng điện RMS (Amperes)
+  current_rms = rms_voltage_diff / ACS712_SENSITIVITY;
+  
+  // Lọc nhiễu nền nếu dòng điện quá nhỏ (< 0.04A ~ 0.48W)
+  if (current_rms < 0.04) {
+    current_rms = 0.0;
+  }
+  
+  power_watts = VOLTAGE_DC * current_rms;
+}
+
+// ======================================================
+// HÀM BẮN DỮ LIỆU TELEMETRY VÀ IN LOG SERIAL MONITOR
+// ======================================================
+void publishTelemetry() {
+  msg_count++;
+  StaticJsonDocument<384> doc;
+  doc["current"] = current_rms;
+  doc["power"] = power_watts;
+  doc["fan"] = fan_state;
+  doc["led"] = led_state;
+  doc["auto_mode"] = auto_mode;
+  doc["peak_limit"] = peak_limit;
+  doc["raw_adc"] = raw_adc_val;
+  doc["voltage"] = sensor_voltage;
+  doc["msg_id"] = msg_count;
+
+  // SỬA LỖI COMPILATION: Khai báo mảng char buffer 384 bytes
+  char buffer[2];
+  serializeJson(doc, buffer);
+  mqttClient.publish(TOPIC_TELEMETRY, buffer);
+
+  // --- IN GIÁ TRỊ CHI TIẾT RA SERIAL MONITOR TRÊN ARDUINO IDE ---
+  Serial.print("[#");
+  Serial.print(msg_count);
+  Serial.print("] ADC Pin1: ");
+  Serial.print(raw_adc_val);
+  Serial.print(" | Vol: ");
+  Serial.print(sensor_voltage, 2);
+  Serial.print("V | Dòng RMS: ");
+  Serial.print(current_rms, 2);
+  Serial.print(" A | Công suất: ");
+  Serial.print(power_watts, 2);
+  Serial.print(" W | Quạt: ");
+  Serial.print(fan_state ? "ON " : "OFF");
+  Serial.print(" | Đèn: ");
+  Serial.print(led_state ? "ON " : "OFF");
+  Serial.print(" | Mode: ");
+  Serial.println(auto_mode ? "AUTO" : "MANUAL");
+}
+
+// ======================================================
+// HÀM XỬ LÝ LỆNH ĐIỀU KHIỂN TỪ WEB VERCEL
+// ======================================================
+void mqttCallback(char* topic, byte* payload, unsigned int length) {
+  StaticJsonDocument<256> doc;
+  DeserializationError error = deserializeJson(doc, payload, length);
+  if (error) return;
+
+  Serial.println("\n📩 [MQTT IN] Nhận lệnh từ Web Vercel:");
+
+  if (doc.containsKey("auto_mode")) {
+    auto_mode = doc["auto_mode"];
+    Serial.print("  -> Chế độ Auto: ");
+    Serial.println(auto_mode ? "BẬT" : "TẮT");
+  }
+
+  if (doc.containsKey("peak_limit")) {
+    peak_limit = doc["peak_limit"];
+    Serial.print("  -> Cài Ngưỡng Đỉnh: ");
+    Serial.print(peak_limit);
+    Serial.println(" W");
+  }
+
+  // Lệnh bật/tắt Quạt thủ công
+  if (doc.containsKey("fan")) {
+    fan_state = doc["fan"];
+    digitalWrite(PIN_RELAY_FAN, fan_state ? LOW : HIGH); // Active LOW
+    Serial.print("  -> Đã chuyển Quạt 12V: ");
+    Serial.println(fan_state ? "BẬT (ON)" : "TẮT (OFF)");
+  }
+
+  // Lệnh bật/tắt Đèn LED thủ công
+  if (doc.containsKey("led")) {
+    led_state = doc["led"];
+    was_shed_by_auto = false; // Xóa cờ sa thải tải khi bấm thủ công
+    digitalWrite(PIN_RELAY_LED, led_state ? LOW : HIGH); // Active LOW
+    Serial.print("  -> Đã chuyển Đèn LED: ");
+    Serial.println(led_state ? "BẬT (ON)" : "TẮT (OFF)");
+  }
+
+  publishTelemetry();
+}
+
+// ======================================================
+// KẾT NỐI WIFI & MQTT BROKER TỰ ĐỘNG KHÔI PHỤC (LWT)
+// ======================================================
+void reconnectMQTT() {
+  while (!mqttClient.connected()) {
+    Serial.print("Đang kết nối HiveMQ Broker... ");
+    if (mqttClient.connect(CLIENT_ID, TOPIC_STATUS, 1, true, "OFFLINE")) {
+      Serial.println("THÀNH CÔNG!");
+      mqttClient.publish(TOPIC_STATUS, "ONLINE", true);
+      mqttClient.subscribe(TOPIC_CONTROL);
+    } else {
+      Serial.print("Thất bại, rc=");
+      Serial.print(mqttClient.state());
+      Serial.println(". Thử lại sau 2 giây...");
+      delay(2000);
+    }
+  }
+}
+
+void setup() {
+  Serial.begin(115200);
+  delay(1000);
+
+  Serial.println("\n====================================================");
+  Serial.println("   ESP32-S3 SMART ENERGY & LOAD MANAGEMENT SYSTEM   ");
+  Serial.println("====================================================");
+
+  // Khóa cứng Rơ-le ở mức TẮT (HIGH) tránh giật khi cắm USB
+  digitalWrite(PIN_RELAY_FAN, HIGH);
+  digitalWrite(PIN_RELAY_LED, HIGH);
+
+  pinMode(PIN_RELAY_FAN, OUTPUT);
+  pinMode(PIN_RELAY_LED, OUTPUT);
+
+  digitalWrite(PIN_RELAY_FAN, HIGH);
+  digitalWrite(PIN_RELAY_LED, HIGH);
+
+  analogReadResolution(12);
+  analogSetAttenuation(ADC_11db);
+
+  // Calib điểm 0 cảm biến ACS712
+  calibrateACS712Zero();
+
+  // Kết nối Wi-Fi
+  Serial.print("Đang kết nối Wi-Fi: ");
+  Serial.println(WIFI_SSID);
+  WiFi.mode(WIFI_STA);
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(500);
+    Serial.print(".");
+  }
+  Serial.println("\n✅ Wi-Fi đã kết nối thành công!");
+  Serial.print("📌 Địa chỉ IP ESP32-S3: ");
+  Serial.println(WiFi.localIP());
+
+  mqttClient.setServer(MQTT_BROKER, MQTT_PORT);
+  mqttClient.setCallback(mqttCallback);
+  reconnectMQTT();
+}
+
+void loop() {
+  if (!mqttClient.connected()) reconnectMQTT();
+  mqttClient.loop();
+
+  // Đọc cảm biến và gửi telemetry định kỳ đúng mỗi 1 giây
+  if (millis() - last_telemetry_time >= 1000) {
+    last_telemetry_time = millis();
+
+    readACS712();
+
+    // THUẬT TOÁN SA THẢI TẢI TỰ ĐỘNG (CHỈ CHẠY KHI BẬT CHẾ ĐỘ AUTO)
+    if (auto_mode) {
+      if (power_watts > peak_limit && led_state) {
+        led_state = false;
+        was_shed_by_auto = true;
+        digitalWrite(PIN_RELAY_LED, HIGH);
+        Serial.println("⚠️ [SA THẢI TẢI] Vượt ngưỡng đỉnh! Tự động TẮT Đèn LED.");
+      } 
+      else if (power_watts < (peak_limit - hysteresis) && !led_state && was_shed_by_auto) {
+        led_state = true;
+        was_shed_by_auto = false;
+        digitalWrite(PIN_RELAY_LED, LOW);
+        Serial.println("✅ [SA THẢI TẢI] Công suất an toàn! Tự động BẬT LẠI Đèn LED.");
+      }
+    }
+
+    publishTelemetry();
+  }
+}
+2. GIAO DIỆN WEB DASHBOARD VERCEL (index.html)
+Thang đo đồ thị đã được tối ưu nhỏ gọn (Công suất max 4W, Dòng điện max 1A) giúp chỉ số 1.7 W và 0.26 A cuộn sóng nhấp nhô tuyệt đẹp thời gian thực.
+Dán đè toàn bộ code này vào file index.html trên máy tính rồi Deploy lại lên Vercel:
 <!DOCTYPE html>
 <html lang="vi">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard v12</title>
+  <title>Smart Energy IoT - Realtime Dashboard</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
@@ -151,7 +452,7 @@
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 3.0 };
 
-    // 1. KHỞI TẠO MẢNG THỜI GIAN CƠ SỞ
+    // 1. KHỞI TẠO MẢNG THỜI GIAN
     const initialLabels = [];
     const initialPower = [];
     const initialCurrent = [];
@@ -163,7 +464,7 @@
       initialCurrent.push(0.0);
     }
 
-    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS - ĐÃ ĐIỀU CHỈNH THANG ĐO NHỎ GỌN (MAX 4W & 1A)
+    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS DUAL Y-AXIS (SỬA CHUẨN MẢNG DATASETS)
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -173,7 +474,7 @@
           {
             label: 'Công suất (Watts - W)',
             data: initialPower,
-            borderColor: '#f59e0b', // Màu vàng cam
+            borderColor: '#f59e0b', // Vàng cam
             backgroundColor: 'rgba(245, 158, 11, 0.15)',
             fill: true,
             tension: 0.2,
@@ -184,7 +485,7 @@
           {
             label: 'Dòng điện (Amperes - A)',
             data: initialCurrent,
-            borderColor: '#06b6d4', // Màu xanh cyan
+            borderColor: '#06b6d4', // Xanh cyan
             backgroundColor: 'rgba(6, 182, 212, 0.15)',
             fill: false,
             tension: 0.2,
@@ -210,7 +511,7 @@
             grid: { color: '#334155' },
             ticks: { color: '#f59e0b' },
             beginAtZero: true,
-            suggestedMax: 4.0 // ĐÃ TỐI ƯU: Thang đo tối đa 4.0 W giúp 1.7W hiện rõ ràng giữa biểu đồ
+            suggestedMax: 4.0 // Scale nhỏ max 4.0 W
           },
           yCurrent: {
             type: 'linear',
@@ -219,7 +520,7 @@
             grid: { drawOnChartArea: false },
             ticks: { color: '#06b6d4' },
             beginAtZero: true,
-            suggestedMax: 1.0 // ĐÃ TỐI ƯU: Thang đo tối đa 1.0 A giúp 0.26A hiện cao đẹp mắt
+            suggestedMax: 1.0 // Scale nhỏ max 1.0 A
           }
         },
         plugins: { 
@@ -258,7 +559,7 @@
         const data = JSON.parse(payload);
         currentState = data;
 
-        // Cập nhật các thẻ hiển thị số
+        // Cập nhật các thẻ số liệu
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
@@ -281,345 +582,7 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // ĐẨY DỮ LIỆU VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ - ĐÃ SỬA CHUẨN XÁC LỖI MẢNG DATASETS
-        pushDataToChart(data.power, data.current);
-      }
-    });
-
-    // HÀM CẬP NHẬT MẢNG DỮ LIỆU & VẼ LẠI BIỂU ĐỒ SỐNG MƯỢT MÀ KHÔNG BỊ ĐƠ
-    function pushDataToChart(powerVal, currentVal) {
-      const now = new Date().toLocaleTimeString('vi-VN');
-      
-      // Giữ cố định 20 mốc thời gian gần nhất
-      if (chart.data.labels.length >= 20) {
-        chart.data.labels.shift();
-        chart.data.datasets.data.shift(); // SỬA CHUẨN: Xóa điểm Công suất (W) cũ
-        chart.data.datasets[3].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (A) cũ
-      }
-      
-      chart.data.labels.push(now);
-      chart.data.datasets.data.push(powerVal);   // Dataset index 0: Công suất (W)
-      chart.data.datasets[3].data.push(currentVal); // Dataset index 1: Dòng điện (A)
-      
-      chart.update('none'); // CẬP NHẬT TỨC THÌ MƯỢT MÀ KHÔNG TRỄ KHUNG HÌNH
-    }
-
-    function updateBadge(badgeId, isStateOn) {
-      const badge = document.getElementById(badgeId);
-      if (isStateOn) {
-        badge.className = 'px-3 py-1 rounded-md text-xs font-extrabold bg-emerald-500/20 text-emerald-400 border border-emerald-500/40';
-        badge.innerText = 'ON (ĐANG BẬT)';
-      } else {
-        badge.className = 'px-3 py-1 rounded-md text-xs font-extrabold bg-rose-500/20 text-rose-400 border border-rose-500/40';
-        badge.innerText = 'OFF (ĐANG TẮT)';
-      }
-    }
-
-    // 4. GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32
-    function sendControl(deviceType, stateValue) {
-      const command = {};
-      if (deviceType === 'fan') command.fan = stateValue;
-      if (deviceType === 'led') command.led = stateValue;
-      client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify(command));
-    }
-
-    function changeAutoMode(isAuto) {
-      client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ auto_mode: isAuto }));
-    }
-
-    function updatePeakLimit() {
-      const val = parseFloat(document.getElementById('input-limit').value);
-      if (val > 0) {
-        client.publish(`${TOPIC_PREFIX}/control`, JSON.stringify({ peak_limit: val }));
-      }
-    }
-  </script>
-</body>
-</html>
-📦 MÃ NGUỒN FIRMWARE ESP32-S3 (esp32_firmware-v12.ino)File esp32_firmware-v12.ino đã được lưu vào bảng Studio ở góc phải màn hình để bạn tải về nạp trực tiếp cho board ESP32-S3.⛵ Các bước nghiệm thu nhanh:Tháo dây quạt/đèn trên Rơ-le và vặn sang cọc NO (Normally Open)2.Deploy file index.html mới lên Vercel rồi nhấn Ctrl + F5 tải lại trang web.Nhấn nút BẬT (ON) Quạt trên Web: Quạt quay $\rightarrow$ Thẻ số hiển thị 1.7 W / 0.26 A $\rightarrow$ Hai đường biểu đồ màu xanh Cyan và màu cam Amber sẽ cuộn sóng nhảy số mượt mà nhô cao rất đẹp giữa màn hình!Hãy cập nhật và kiểm tra thử xem giao diện mới đã đúng theo mong muốn của bạn chưa nhé!keep_pinLưu vào ghi chúkeep_pincopy_allthumb_upthumb_downsố liệu dòng điện với công suất tiêu thụ không chạy liên tục, biểu đồ cần chạy liên tục Thoughts expand_moreTôi đã tìm ra nguyên nhân chính xác 100% khiến số liệu và biểu đồ trên trang Web của bạn bị đứng hình, không cập nhật liên tục!🔴 NGUYÊN NHÂN KỸ THUẬT GÂY BĂNG/ĐỨNG BIỂU ĐỒTrình duyệt Web bị một lỗi JavaScript ngầm (Uncaught TypeError) mỗi khi nhận gói tin MQTT từ ESP32-S3 gửi về:Thư viện Chart.js quản lý 2 đường đồ thị dưới dạng một mảng:chart.data.datasets: Đường dữ liệu Công suất (Watts)chart.data.datasets1: Đường dữ liệu Dòng điện (Amperes)Trong đoạn code JavaScript cũ, lệnh đẩy dữ liệu bị thiếu chỉ số mảng `` và 1 (`chart.data.datasets.data.push(...)` thay vì `chart.data.datasets.data.push(...)`).Khi ESP32-S3 gửi gói tin dữ liệu mới về mỗi 1 giây, trình duyệt chạy đến dòng lệnh này bị lỗi cú pháp và dừng đột ngột, khiến câu lệnh vẽ lại khung hình chart.update() không bao giờ được thực thi. Do đó số liệu bị đóng biến và biểu đồ bị đơ/đứng yên!🟢 MÃ NGUỒN WEB DASHBOARD ĐÃ SỬA HOÀN CHỈNH 100% (index.html)Bạn copy toàn bộ đoạn mã index.html dưới đây, dán đè vào file index.html trong dự án Vercel trên máy tính rồi Deploy lại lên Vercel:<!DOCTYPE html>
-<html lang="vi">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard v12 Fixed</title>
-  <!-- Tailwind CSS -->
-  <script src="https://cdn.tailwindcss.com"></script>
-  <!-- Chart.js -->
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- MQTT.js over WebSockets Secure -->
-  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
-</head>
-<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
-  <div class="max-w-6xl mx-auto space-y-6">
-    
-    <!-- HEADER -->
-    <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
-      <div>
-        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Dòng Điện & Công Suất Realtime</h1>
-        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets</p>
-      </div>
-      <div class="flex items-center gap-3">
-        <span class="text-sm text-slate-400">Trạng thái ESP32-S3:</span>
-        <span id="status-badge" class="px-4 py-1.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
-          Đang kết nối...
-        </span>
-      </div>
-    </div>
-
-    <!-- METRICS CARDS -->
-    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
-      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-        <p class="text-slate-400 text-xs font-semibold uppercase">Dòng điện RMS (ACS712)</p>
-        <p id="val-current" class="text-3xl font-black text-cyan-400 mt-2">0.00 <span class="text-sm font-normal text-slate-400">A</span></p>
-      </div>
-
-      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-        <p class="text-slate-400 text-xs font-semibold uppercase">Công suất Tiêu thụ</p>
-        <p id="val-power" class="text-3xl font-black text-amber-400 mt-2">0.00 <span class="text-sm font-normal text-slate-400">W</span></p>
-      </div>
-
-      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-        <p class="text-slate-400 text-xs font-semibold uppercase">Ngưỡng Đỉnh (Peak Limit)</p>
-        <p id="val-limit" class="text-3xl font-black text-rose-400 mt-2">3.0 <span class="text-sm font-normal text-slate-400">W</span></p>
-      </div>
-
-      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
-        <p class="text-slate-400 text-xs font-semibold uppercase">Chế độ Sa thải tải</p>
-        <p id="val-mode" class="text-2xl font-bold text-slate-400 mt-2">THỦ CÔNG</p>
-      </div>
-    </div>
-
-    <!-- MAIN CONTENT -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-      
-      <!-- BIỂU ĐỒ SỐNG DÒNG ĐIỆN & CÔNG SUẤT REALTIME -->
-      <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4">
-        <div class="flex justify-between items-center">
-          <h2 class="text-lg font-bold text-slate-200">Đồ thị Dòng điện (A) & Công suất (W) Tải Nhỏ</h2>
-          <span class="text-xs text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-md border border-emerald-500/20 font-mono">
-            ⚡ Streaming Realtime 1s
-          </span>
-        </div>
-        <div class="relative h-80">
-          <canvas id="powerChart"></canvas>
-        </div>
-
-        <!-- BẢNG CHẨN ĐOÁN DEBUG PHẦN CỨNG -->
-        <div class="bg-slate-900/60 p-4 rounded-xl border border-slate-700/50 text-xs space-y-1 text-slate-400">
-          <p class="font-bold text-slate-300">🛠️ Thông số Cảm biến ACS712 & Mạng MQTT:</p>
-          <div class="grid grid-cols-2 md:grid-cols-4 gap-2 pt-1 font-mono">
-            <div>Raw ADC Pin 1: <span id="debug-adc" class="text-cyan-400">0</span></div>
-            <div>Voltage GPIO1: <span id="debug-vol" class="text-cyan-400">0.00 V</span></div>
-            <div>Gói tin đã nhận: <span id="debug-msg" class="text-cyan-400">0</span></div>
-            <div>Topic: <span class="text-emerald-400">node9988</span></div>
-          </div>
-        </div>
-      </div>
-
-      <!-- BẢNG ĐIỀU KHIỂN THỦ CÔNG ON / OFF -->
-      <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
-        <h2 class="text-lg font-bold text-slate-200 border-b border-slate-700 pb-3">Điều Khiển Tải Từ Xa</h2>
-        
-        <!-- TẢI 1: QUẠT 12V (GPIO 12) -->
-        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700/60 space-y-3">
-          <div class="flex justify-between items-center">
-            <div>
-              <p class="font-semibold text-slate-200">Quạt 12V (GPIO 12)</p>
-              <p class="text-xs text-emerald-400">Ưu tiên Cao</p>
-            </div>
-            <span id="badge-fan" class="px-3 py-1 rounded-md text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">
-              OFF (ĐANG TẮT)
-            </span>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <button onclick="sendControl('fan', true)" class="py-2.5 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
-              BẬT (ON)
-            </button>
-            <button onclick="sendControl('fan', false)" class="py-2.5 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
-              TẮT (OFF)
-            </button>
-          </div>
-        </div>
-
-        <!-- TẢI 2: ĐÈN LED MODULE (GPIO 13) -->
-        <div class="bg-slate-900/80 p-4 rounded-xl border border-slate-700/60 space-y-3">
-          <div class="flex justify-between items-center">
-            <div>
-              <p class="font-semibold text-slate-200">Đèn LED (GPIO 13)</p>
-              <p class="text-xs text-rose-400">Ưu tiên Thấp (Sa thải)</p>
-            </div>
-            <span id="badge-led" class="px-3 py-1 rounded-md text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40">
-              OFF (ĐANG TẮT)
-            </span>
-          </div>
-          <div class="grid grid-cols-2 gap-2">
-            <button onclick="sendControl('led', true)" class="py-2.5 rounded-lg font-extrabold text-sm bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg transition">
-              BẬT (ON)
-            </button>
-            <button onclick="sendControl('led', false)" class="py-2.5 rounded-lg font-extrabold text-sm bg-rose-600 hover:bg-rose-500 text-white shadow-lg transition">
-              TẮT (OFF)
-            </button>
-          </div>
-        </div>
-
-        <!-- CẤU HÌNH NGƯỠNG PEAK -->
-        <div class="pt-4 border-t border-slate-700 space-y-4">
-          <div class="flex items-center justify-between">
-            <span class="text-sm text-slate-300">Bật Chế độ Tự động (Auto):</span>
-            <input type="checkbox" id="chk-auto" onchange="changeAutoMode(this.checked)" class="w-5 h-5 accent-teal-500 cursor-pointer">
-          </div>
-
-          <div>
-            <label class="text-xs text-slate-400 block mb-1">Cài đặt Ngưỡng Đỉnh (W):</label>
-            <div class="flex gap-2">
-              <input type="number" id="input-limit" value="3.0" step="0.5" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:outline-none focus:border-teal-500">
-              <button onclick="updatePeakLimit()" class="bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs px-4 py-1.5 rounded-lg transition">
-                Cập nhật
-              </button>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </div>
-
-  </div>
-
-  <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME -->
-  <script>
-    let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 3.0 };
-
-    // 1. KHỞI TẠO MẢNG THỜI GIAN BAN ĐẦU
-    const initialLabels = [];
-    const initialPower = [];
-    const initialCurrent = [];
-    const nowTime = new Date();
-    for (let i = 14; i >= 0; i--) {
-      const t = new Date(nowTime.getTime() - i * 1000);
-      initialLabels.push(t.toLocaleTimeString('vi-VN'));
-      initialPower.push(0.0);
-      initialCurrent.push(0.0);
-    }
-
-    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS - THANG ĐO NHỎ (MAX 4W VÀ MAX 1A)
-    const ctx = document.getElementById('powerChart').getContext('2d');
-    const chart = new Chart(ctx, {
-      type: 'line',
-      data: {
-        labels: initialLabels,
-        datasets: [
-          {
-            label: 'Công suất (Watts - W)',
-            data: initialPower,
-            borderColor: '#f59e0b', // Màu vàng cam
-            backgroundColor: 'rgba(245, 158, 11, 0.15)',
-            fill: true,
-            tension: 0.2,
-            borderWidth: 2,
-            pointRadius: 3,
-            yAxisID: 'yPower'
-          },
-          {
-            label: 'Dòng điện (Amperes - A)',
-            data: initialCurrent,
-            borderColor: '#06b6d4', // Màu xanh cyan
-            backgroundColor: 'rgba(6, 182, 212, 0.15)',
-            fill: false,
-            tension: 0.2,
-            borderWidth: 2,
-            pointRadius: 3,
-            yAxisID: 'yCurrent'
-          }
-        ]
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        animation: false,
-        scales: {
-          x: { 
-            grid: { color: '#334155' }, 
-            ticks: { color: '#94a3b8', font: { size: 10 } } 
-          },
-          yPower: {
-            type: 'linear',
-            position: 'left',
-            title: { display: true, text: 'Công suất (W)', color: '#f59e0b' },
-            grid: { color: '#334155' },
-            ticks: { color: '#f59e0b' },
-            beginAtZero: true,
-            suggestedMax: 4.0 // Thang đo công suất tối đa 4W
-          },
-          yCurrent: {
-            type: 'linear',
-            position: 'right',
-            title: { display: true, text: 'Dòng điện (A)', color: '#06b6d4' },
-            grid: { drawOnChartArea: false },
-            ticks: { color: '#06b6d4' },
-            beginAtZero: true,
-            suggestedMax: 1.0 // Thang đo dòng điện tối đa 1A
-          }
-        },
-        plugins: { 
-          legend: { labels: { color: '#e2e8f0', font: { weight: 'bold' } } } 
-        }
-      }
-    });
-
-    // 3. KẾT NỐI WEBSOCKET SECURE TỚI HIVEMQ BROKER (PORT 8884)
-    const TOPIC_PREFIX = 'smartenergy_node9988';
-    const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
-      clientId: 'Vercel_Dashboard_Real_' + Math.random().toString(16).substr(2, 8)
-    });
-
-    client.on('connect', () => {
-      console.log('✅ Đã kết nối MQTT Broker thành công!');
-      client.subscribe(`${TOPIC_PREFIX}/telemetry`);
-      client.subscribe(`${TOPIC_PREFIX}/status`);
-    });
-
-    client.on('message', (topic, message) => {
-      const payload = message.toString();
-
-      if (topic === `${TOPIC_PREFIX}/status`) {
-        const badge = document.getElementById('status-badge');
-        if (payload === 'ONLINE') {
-          badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
-          badge.innerText = 'ONLINE';
-        } else {
-          badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40';
-          badge.innerText = 'OFFLINE';
-        }
-      }
-
-      if (topic === `${TOPIC_PREFIX}/telemetry`) {
-        const data = JSON.parse(payload);
-        currentState = data;
-
-        // Cập nhật các thẻ hiển thị số
-        document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
-        document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
-        document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
-        
-        const modeElem = document.getElementById('val-mode');
-        if (data.auto_mode) {
-          modeElem.innerText = 'TỰ ĐỘNG';
-          modeElem.className = 'text-2xl font-bold text-emerald-400 mt-2';
-        } else {
-          modeElem.innerText = 'THỦ CÔNG';
-          modeElem.className = 'text-2xl font-bold text-slate-400 mt-2';
-        }
-        document.getElementById('chk-auto').checked = data.auto_mode;
-
-        // Cập nhật Debug Panel
-        if (data.raw_adc !== undefined) document.getElementById('debug-adc').innerText = data.raw_adc;
-        if (data.voltage !== undefined) document.getElementById('debug-vol').innerText = data.voltage.toFixed(2) + ' V';
-        if (data.msg_id !== undefined) document.getElementById('debug-msg').innerText = data.msg_id;
-
-        updateBadge('badge-fan', data.fan);
-        updateBadge('badge-led', data.led);
-
-        // ĐẨY DỮ LIỆU VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (ĐÃ SỬA LỖI MẢNG DATASETS CHUẨN XÁC)
+        // ĐẨY DỮ LIỆU THỰC TẾ VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (SỬA CHUẨN MẢNG DATASETS)
         pushDataToChart(data.power, data.current);
       }
     });
@@ -628,16 +591,16 @@
     function pushDataToChart(powerVal, currentVal) {
       const now = new Date().toLocaleTimeString('vi-VN');
       
-      // Giữ cố định 20 mốc thời gian gần nhất
+      // Giữ 20 mốc thời gian gần nhất
       if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
-        chart.data.datasets.data.shift(); // ✅ ĐÃ SỬA CHUẨN: Xóa điểm Công suất (Dataset 0)
-        chart.data.datasets[1].data.shift(); // ✅ ĐÃ SỬA CHUẨN: Xóa điểm Dòng điện (Dataset 1)
+        chart.data.datasets.data.shift(); // SỬA CHUẨN: Xóa điểm Công suất (Dataset 0)
+        chart.data.datasets[3].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (Dataset 1)
       }
       
       chart.data.labels.push(now);
-      chart.data.datasets.data.push(powerVal);   // ✅ ĐÃ SỬA CHUẨN: Thêm điểm Công suất (Dataset 0)
-      chart.data.datasets[1].data.push(currentVal); // ✅ ĐÃ SỬA CHUẨN: Thêm điểm Dòng điện (Dataset 1)
+      chart.data.datasets.data.push(powerVal);   // SỬA CHUẨN: Thêm điểm Công suất (Dataset 0)
+      chart.data.datasets[3].data.push(currentVal); // SỬA CHUẨN: Thêm điểm Dòng điện (Dataset 1)
       
       chart.update('none'); // VẼ LẠI KHUNG HÌNH TỨC THÌ MƯỢT MÀ
     }
