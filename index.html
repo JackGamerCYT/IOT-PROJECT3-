@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Current & Power Dashboard</title>
+  <title>Smart Energy IoT - Realtime Dashboard</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
@@ -147,11 +147,11 @@
 
   </div>
 
-  <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME (2 ĐƯỜNG: CURRENT & POWER) -->
+  <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME -->
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 15.0 };
 
-    // 1. TẠO DỮ LIỆU BAN ĐẦU ĐỂ BIỂU ĐỒ NỔI TRỤC X/Y NGAY KHI VỪA MỞ TRANG
+    // 1. KHỞI TẠO TẢI MẢNG THỜI GIAN TRƯỚC ĐỂ KHUNG BIỂU ĐỒ HIỆN NGAY
     const initialLabels = [];
     const initialPower = [];
     const initialCurrent = [];
@@ -163,7 +163,7 @@
       initialCurrent.push(0.0);
     }
 
-    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS VỚI DUAL Y-AXIS (CÔNG SUẤT W & DÒNG ĐIỆN A)
+    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS DUAL Y-AXIS (Y1: WATTS, Y2: AMPERES)
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -197,7 +197,7 @@
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false, // TẮT ANIMATION ĐỂ KHUNG HÌNH VẼ SỐNG TỨC THÌ
+        animation: false,
         scales: {
           x: { 
             grid: { color: '#334155' }, 
@@ -216,7 +216,7 @@
             type: 'linear',
             position: 'right',
             title: { display: true, text: 'Dòng điện (A)', color: '#06b6d4' },
-            grid: { drawOnChartArea: false }, // Không chồng lưới gây rối mắt
+            grid: { drawOnChartArea: false },
             ticks: { color: '#06b6d4' },
             beginAtZero: true,
             suggestedMax: 2.0
@@ -258,7 +258,7 @@
         const data = JSON.parse(payload);
         currentState = data;
 
-        // Cập nhật các giá trị thẻ số liệu
+        // Cập nhật thẻ số liệu
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
@@ -281,25 +281,26 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // ĐẨY DỮ LIỆU CẢ 2 ĐƯỜNG (CURRENT & POWER) LÊN BIỂU ĐỒ REALTIME
+        // ĐẨY DỮ LIỆU THỰC TẾ VÀO BIỂU ĐỒ (ĐÃ SỬA LỖI MẢNG DATASETS)
         pushDataToChart(data.power, data.current);
       }
     });
 
+    // HÀM CẬP NHẬT MẢNG DỮ LIỆU VÀ VẼ LẠI BIỂU ĐỒ CHUẨN XÁC 100%
     function pushDataToChart(powerVal, currentVal) {
       const now = new Date().toLocaleTimeString('vi-VN');
       
-      // Giữ cố định 20 điểm dữ liệu thời gian mượt mà
+      // Giữ cố định 20 mốc thời gian gần nhất
       if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
-        chart.data.datasets.data.shift(); // Power
-        chart.data.datasets[1].data.shift(); // Current
+        chart.data.datasets.data.shift(); // Xóa điểm Công suất (W) cũ nhất
+        chart.data.datasets[1].data.shift(); // Xóa điểm Dòng điện (A) cũ nhất
       }
       
       chart.data.labels.push(now);
-      chart.data.datasets.data.push(powerVal);   // Nạp giá trị Watt
-      chart.data.datasets[1].data.push(currentVal); // Nạp giá trị Ampe
-      chart.update(); // VẼ LẠI BIỂU ĐỒ TỨC THÌ
+      chart.data.datasets.data.push(powerVal);   // Dataset 0: Công suất (W)
+      chart.data.datasets[1].data.push(currentVal); // Dataset 1: Dòng điện (A)
+      chart.update(); // VẼ LẠI KHUNG HÌNH TỨC THÌ
     }
 
     function updateBadge(badgeId, isStateOn) {
@@ -313,7 +314,7 @@
       }
     }
 
-    // 4. GỬI LỆNH ĐIỀU KHIỂN
+    // 4. GỬI LỆNH ĐIỀU KHIỂN XUỐNG ESP32
     function sendControl(deviceType, stateValue) {
       const command = {};
       if (deviceType === 'fan') command.fan = stateValue;
