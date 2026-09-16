@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Smart Energy IoT - Vercel Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
+  <div class="max-w-6xl mx-auto space-y-6">
+    
+    <!-- HEADER -->
+    <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
+      <div>
+        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Năng Lượng & Quản Lý Tải Thông Minh</h1>
+        <p class="text-slate-400 text-sm mt-1">Kết nối Toàn cầu qua Cloud MQTT Broker & Vercel</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-sm text-slate-400">Trạng thái ESP32:</span>
+        <span id="status-badge" class="px-4 py-1.5 rounded-full text-xs font-bold bg-amber-500/20 text-amber-400 border border-amber-500/30">
+          Đang kết nối...
+        </span>
+      </div>
+    </div>
+
+    <!-- CARDS -->
+    <div class="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+        <p class="text-slate-400 text-xs font-semibold uppercase">Dòng điện RMS</p>
+        <p id="val-current" class="text-3xl font-black text-cyan-400 mt-2">0.00 <span class="text-sm font-normal text-slate-400">A</span></p>
+      </div>
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+        <p class="text-slate-400 text-xs font-semibold uppercase">Công suất Tiêu thụ</p>
+        <p id="val-power" class="text-3xl font-black text-amber-400 mt-2">0.00 <span class="text-sm font-normal text-slate-400">W</span></p>
+      </div>
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+        <p class="text-slate-400 text-xs font-semibold uppercase">Ngưỡng Đỉnh (Peak)</p>
+        <p id="val-limit" class="text-3xl font-black text-rose-400 mt-2">15.0 <span class="text-sm font-normal text-slate-400">W</span></p>
+      </div>
+      <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
+        <p class="text-slate-400 text-xs font-semibold uppercase">Chế độ</p>
+        <p id="val-mode" class="text-2xl font-bold text-emerald-400 mt-2">TỰ ĐỘNG</p>
+      </div>
+    </div>
+
+    <!-- DASHBOARD BODY -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700">
+        <h2 class="text-lg font-bold text-slate-200 mb-4">Đồ thị Công suất Realtime (W)</h2>
+        <div class="relative h-72"><canvas id="powerChart"></canvas></div>
+      </div>
+
+      <div class="bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-6">
+        <h2 class="text-lg font-bold text-slate-200 border-b border-slate-700 pb-3">Điều Khiển Tải Cục Bộ</h2>
+        
+        <div class="flex items-center justify-between bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
+          <div>
+            <p class="font-semibold text-slate-200">Tải 1: Quạt 12V</p>
+            <p class="text-xs text-emerald-400 mt-0.5">Ưu tiên Cao</p>
+          </div>
+          <button id="btn-fan" onclick="toggleLoad('fan')" class="px-5 py-2.5 rounded-lg font-bold text-sm bg-slate-700 text-slate-300">---</button>
+        </div>
+
+        <div class="flex items-center justify-between bg-slate-900/60 p-4 rounded-xl border border-slate-700/50">
+          <div>
+            <p class="font-semibold text-slate-200">Tải 2: Đèn LED Module</p>
+            <p class="text-xs text-rose-400 mt-0.5">Ưu tiên Thấp (Sa thải)</p>
+          </div>
+          <button id="btn-led" onclick="toggleLoad('led')" class="px-5 py-2.5 rounded-lg font-bold text-sm bg-slate-700 text-slate-300">---</button>
+        </div>
+
+        <div class="pt-4 border-t border-slate-700 space-y-4">
+          <div class="flex items-center justify-between">
+            <span class="text-sm text-slate-300">Chế độ Tự động:</span>
+            <input type="checkbox" id="chk-auto" onchange="changeAutoMode(this.checked)" checked class="w-5 h-5 accent-teal-500 cursor-pointer">
+          </div>
+          <div>
+            <label class="text-xs text-slate-400 block mb-1">Cài đặt Ngưỡng Đỉnh mới (W):</label>
+            <div class="flex gap-2">
+              <input type="number" id="input-limit" value="15" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:outline-none focus:border-teal-500">
+              <button onclick="updatePeakLimit()" class="bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs px-4 py-1.5 rounded-lg transition">Lưu</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    let currentState = { fan: false, led: false, auto_mode: true, peak_limit: 15.0 };
+
+    const ctx = document.getElementById('powerChart').getContext('2d');
+    const chart = new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: [],
+        datasets: [{ label: 'Công suất (W)', data: [], borderColor: '#f59e0b', backgroundColor: 'rgba(245, 158, 11, 0.1)', fill: true, tension: 0.3 }]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+
+    // KẾT NỐI MQTT OVER WEBSOCKETS BẢO MẬT
+    const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
+      clientId: 'Vercel_Client_' + Math.random().toString(16).substr(2, 8)
+    });
+
+    client.on('connect', () => {
+      client.subscribe('smartenergy/telemetry');
+      client.subscribe('smartenergy/status');
+    });
+
+    client.on('message', (topic, message) => {
+      const payload = message.toString();
+
+      if (topic === 'smartenergy/status') {
+        const badge = document.getElementById('status-badge');
+        if (payload === 'ONLINE') {
+          badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
+          badge.innerText = 'ONLINE';
+        } else {
+          badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+          badge.innerText = 'OFFLINE';
+        }
+      }
+
+      if (topic === 'smartenergy/telemetry') {
+        const data = JSON.parse(payload);
+        currentState = data;
+
+        document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
+        document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
+        document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
+        document.getElementById('val-mode').innerText = data.auto_mode ? 'TỰ ĐỘNG' : 'THỦ CÔNG';
+
+        updateButtonUI('btn-fan', data.fan);
+        updateButtonUI('btn-led', data.led);
+
+        const now = new Date().toLocaleTimeString('vi-VN');
+        if (chart.data.labels.length > 20) {
+          chart.data.labels.shift();
+          chart.data.datasets.data.shift();
+        }
+        chart.data.labels.push(now);
+        chart.data.datasets.data.push(data.power);
+        chart.update();
+      }
+    });
+
+    function updateButtonUI(btnId, state) {
+      const btn = document.getElementById(btnId);
+      if (state) {
+        btn.className = 'px-5 py-2.5 rounded-lg font-bold text-sm bg-emerald-600 hover:bg-emerald-500 text-white transition';
+        btn.innerText = 'ĐANG BẬT';
+      } else {
+        btn.className = 'px-5 py-2.5 rounded-lg font-bold text-sm bg-slate-700 hover:bg-slate-600 text-slate-300 transition';
+        btn.innerText = 'ĐANG TẮT';
+      }
+    }
+
+    function toggleLoad(loadType) {
+      const command = {};
+      if (loadType === 'fan') command.fan = !currentState.fan;
+      if (loadType === 'led') command.led = !currentState.led;
+      client.publish('smartenergy/control', JSON.stringify(command));
+    }
+
+    function changeAutoMode(isAuto) {
+      client.publish('smartenergy/control', JSON.stringify({ auto_mode: isAuto }));
+    }
+
+    function updatePeakLimit() {
+      const val = parseFloat(document.getElementById('input-limit').value);
+      if (val > 0) client.publish('smartenergy/control', JSON.stringify({ peak_limit: val }));
+    }
+  </script>
+</body>
+</html>
