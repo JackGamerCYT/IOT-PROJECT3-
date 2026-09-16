@@ -151,7 +151,7 @@
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 15.0 };
 
-    // 1. KHỞI TẠO TẢI MẢNG THỜI GIAN TRƯỚC ĐỂ KHUNG BIỂU ĐỒ HIỆN NGAY
+    // 1. KHỞI TẠO TẢI MẢNG THỜI GIAN TRƯỚC ĐỂ KHUNG BIỂU ĐỒ HIỆN NGAY LÚC ĐẦU
     const initialLabels = [];
     const initialPower = [];
     const initialCurrent = [];
@@ -281,7 +281,7 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // ĐẨY DỮ LIỆU THỰC TẾ VÀO BIỂU ĐỒ (ĐÃ SỬA LỖI MẢNG DATASETS)
+        // ĐẨY DỮ LIỆU THỰC TẾ VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (SỬA CHUẨN MẢNG DATASETS)
         pushDataToChart(data.power, data.current);
       }
     });
@@ -294,12 +294,12 @@
       if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
         chart.data.datasets.data.shift(); // Xóa điểm Công suất (W) cũ nhất
-        chart.data.datasets[1].data.shift(); // Xóa điểm Dòng điện (A) cũ nhất
+        chart.data.datasets[2].data.shift(); // Xóa điểm Dòng điện (A) cũ nhất
       }
       
       chart.data.labels.push(now);
       chart.data.datasets.data.push(powerVal);   // Dataset 0: Công suất (W)
-      chart.data.datasets[1].data.push(currentVal); // Dataset 1: Dòng điện (A)
+      chart.data.datasets[2].data.push(currentVal); // Dataset 1: Dòng điện (A)
       chart.update(); // VẼ LẠI KHUNG HÌNH TỨC THÌ
     }
 
