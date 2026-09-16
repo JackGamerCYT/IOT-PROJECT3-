@@ -8,7 +8,7 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <!-- MQTT.js over WebSockets -->
+  <!-- MQTT.js over WebSockets Secure -->
   <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 min-h-screen p-4 md:p-8">
@@ -159,7 +159,7 @@
       options: {
         responsive: true,
         maintainAspectRatio: false,
-        animation: false, // TẮT ANIMATION ĐỂ BIỂU ĐỒ NHẢY THỜI GIAN THỰC TỨC THÌ
+        animation: false, // TẮT ANIMATION ĐỂ VẼ ĐỒ THỊ DỮ LIỆU SỐNG TỨC THÌ
         scales: {
           x: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' } },
           y: { grid: { color: '#334155' }, ticks: { color: '#94a3b8' }, beginAtZero: true }
@@ -168,7 +168,7 @@
       }
     });
 
-    // 2. KẾT NỐI WEBSOCKET SECURE TỚI HIVEMQ BROKER
+    // 2. KẾT NỐI WEBSOCKET SECURE TỚI HIVEMQ BROKER (PORT 8884)
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
       clientId: 'Vercel_Dashboard_' + Math.random().toString(16).substr(2, 8)
     });
@@ -224,7 +224,7 @@
         }
         chart.data.labels.push(now);
         chart.data.datasets.data.push(data.power);
-        chart.update(); // VẼ LẠI KHUNG HÌNH TỨC THÌ
+        chart.update(); // CẬP NHẬT KHUNG HÌNH MỚI TỨC THÌ
       }
     });
 
