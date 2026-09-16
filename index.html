@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard</title>
+  <title>Smart Energy IoT - Realtime Dashboard v12</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
@@ -42,7 +42,7 @@
 
       <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
         <p class="text-slate-400 text-xs font-semibold uppercase">Ngưỡng Đỉnh (Peak Limit)</p>
-        <p id="val-limit" class="text-3xl font-black text-rose-400 mt-2">15.0 <span class="text-sm font-normal text-slate-400">W</span></p>
+        <p id="val-limit" class="text-3xl font-black text-rose-400 mt-2">3.0 <span class="text-sm font-normal text-slate-400">W</span></p>
       </div>
 
       <div class="bg-slate-800 p-5 rounded-xl border border-slate-700">
@@ -57,7 +57,7 @@
       <!-- BIỂU ĐỒ SỐNG DÒNG ĐIỆN & CÔNG SUẤT REALTIME -->
       <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4">
         <div class="flex justify-between items-center">
-          <h2 class="text-lg font-bold text-slate-200">Đồ thị Dòng điện (A) & Công suất (W) Thực tế</h2>
+          <h2 class="text-lg font-bold text-slate-200">Đồ thị Dòng điện (A) & Công suất (W) Tải Nhỏ</h2>
           <span class="text-xs text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-md border border-emerald-500/20 font-mono">
             ⚡ Streaming Realtime 1s
           </span>
@@ -134,7 +134,7 @@
           <div>
             <label class="text-xs text-slate-400 block mb-1">Cài đặt Ngưỡng Đỉnh (W):</label>
             <div class="flex gap-2">
-              <input type="number" id="input-limit" value="15" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:outline-none focus:border-teal-500">
+              <input type="number" id="input-limit" value="3.0" step="0.5" class="bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-sm w-full focus:outline-none focus:border-teal-500">
               <button onclick="updatePeakLimit()" class="bg-teal-600 hover:bg-teal-500 text-white font-bold text-xs px-4 py-1.5 rounded-lg transition">
                 Cập nhật
               </button>
@@ -149,9 +149,9 @@
 
   <!-- SCRIPT WEBSOCKETS VÀ VẼ BIỂU ĐỒ REALTIME -->
   <script>
-    let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 15.0 };
+    let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 3.0 };
 
-    // 1. KHỞI TẠO TẢI MẢNG THỜI GIAN TRƯỚC ĐỂ KHUNG BIỂU ĐỒ HIỆN NGAY LÚC ĐẦU
+    // 1. KHỞI TẠO MẢNG THỜI GIAN CƠ SỞ
     const initialLabels = [];
     const initialPower = [];
     const initialCurrent = [];
@@ -163,7 +163,7 @@
       initialCurrent.push(0.0);
     }
 
-    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS DUAL Y-AXIS (Y1: WATTS, Y2: AMPERES)
+    // 2. KHỞI TẠO BIỂU ĐỒ CHART.JS - ĐÃ ĐIỀU CHỈNH THANG ĐO NHỎ GỌN (MAX 4W & 1A)
     const ctx = document.getElementById('powerChart').getContext('2d');
     const chart = new Chart(ctx, {
       type: 'line',
@@ -173,23 +173,23 @@
           {
             label: 'Công suất (Watts - W)',
             data: initialPower,
-            borderColor: '#f59e0b',
-            backgroundColor: 'rgba(245, 158, 11, 0.1)',
+            borderColor: '#f59e0b', // Màu vàng cam
+            backgroundColor: 'rgba(245, 158, 11, 0.15)',
             fill: true,
             tension: 0.2,
             borderWidth: 2,
-            pointRadius: 2,
+            pointRadius: 3,
             yAxisID: 'yPower'
           },
           {
             label: 'Dòng điện (Amperes - A)',
             data: initialCurrent,
-            borderColor: '#06b6d4',
-            backgroundColor: 'rgba(6, 182, 212, 0.1)',
+            borderColor: '#06b6d4', // Màu xanh cyan
+            backgroundColor: 'rgba(6, 182, 212, 0.15)',
             fill: false,
             tension: 0.2,
             borderWidth: 2,
-            pointRadius: 2,
+            pointRadius: 3,
             yAxisID: 'yCurrent'
           }
         ]
@@ -210,7 +210,7 @@
             grid: { color: '#334155' },
             ticks: { color: '#f59e0b' },
             beginAtZero: true,
-            suggestedMax: 20
+            suggestedMax: 4.0 // ĐÃ TỐI ƯU: Thang đo tối đa 4.0 W giúp 1.7W hiện rõ ràng giữa biểu đồ
           },
           yCurrent: {
             type: 'linear',
@@ -219,7 +219,7 @@
             grid: { drawOnChartArea: false },
             ticks: { color: '#06b6d4' },
             beginAtZero: true,
-            suggestedMax: 2.0
+            suggestedMax: 1.0 // ĐÃ TỐI ƯU: Thang đo tối đa 1.0 A giúp 0.26A hiện cao đẹp mắt
           }
         },
         plugins: { 
@@ -249,7 +249,7 @@
           badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30';
           badge.innerText = 'ONLINE';
         } else {
-          badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/30';
+          badge.className = 'px-4 py-1.5 rounded-full text-xs font-bold bg-rose-500/20 text-rose-400 border border-rose-500/40';
           badge.innerText = 'OFFLINE';
         }
       }
@@ -258,7 +258,7 @@
         const data = JSON.parse(payload);
         currentState = data;
 
-        // Cập nhật thẻ số liệu
+        // Cập nhật các thẻ hiển thị số
         document.getElementById('val-current').innerHTML = `${data.current.toFixed(2)} <span class="text-sm font-normal text-slate-400">A</span>`;
         document.getElementById('val-power').innerHTML = `${data.power.toFixed(2)} <span class="text-sm font-normal text-slate-400">W</span>`;
         document.getElementById('val-limit').innerHTML = `${data.peak_limit.toFixed(1)} <span class="text-sm font-normal text-slate-400">W</span>`;
@@ -281,26 +281,27 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // ĐẨY DỮ LIỆU THỰC TẾ VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (SỬA CHUẨN MẢNG DATASETS VÀ [5])
+        // ĐẨY DỮ LIỆU VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ - ĐÃ SỬA CHUẨN XÁC LỖI MẢNG DATASETS
         pushDataToChart(data.power, data.current);
       }
     });
 
-    // HÀM CẬP NHẬT MẢNG DỮ LIỆU VÀ VẼ LẠI BIỂU ĐỒ CHUẨN XÁC 100%
+    // HÀM CẬP NHẬT MẢNG DỮ LIỆU & VẼ LẠI BIỂU ĐỒ SỐNG MƯỢT MÀ KHÔNG BỊ ĐƠ
     function pushDataToChart(powerVal, currentVal) {
       const now = new Date().toLocaleTimeString('vi-VN');
       
       // Giữ cố định 20 mốc thời gian gần nhất
       if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
-        chart.data.datasets.data.shift(); // SỬA CHUẨN: Xóa điểm Công suất (W) cũ nhất
-        chart.data.datasets[5].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (A) cũ nhất
+        chart.data.datasets.data.shift(); // SỬA CHUẨN: Xóa điểm Công suất (W) cũ
+        chart.data.datasets[3].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (A) cũ
       }
       
       chart.data.labels.push(now);
-      chart.data.datasets.data.push(powerVal);   // Dataset 0: Công suất (W)
-      chart.data.datasets[5].data.push(currentVal); // Dataset 1: Dòng điện (A)
-      chart.update(); // VẼ LẠI KHUNG HÌNH TỨC THÌ
+      chart.data.datasets.data.push(powerVal);   // Dataset index 0: Công suất (W)
+      chart.data.datasets[3].data.push(currentVal); // Dataset index 1: Dòng điện (A)
+      
+      chart.update('none'); // CẬP NHẬT TỨC THÌ MƯỢT MÀ KHÔNG TRỄ KHUNG HÌNH
     }
 
     function updateBadge(badgeId, isStateOn) {
