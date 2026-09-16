@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Smart Energy IoT - Realtime Dashboard & VS Code Terminal</title>
+  <title>Smart Energy IoT - Realtime Dashboard (2s Interval)</title>
   <!-- Tailwind CSS -->
   <script src="https://cdn.tailwindcss.com"></script>
   <!-- Chart.js -->
@@ -33,8 +33,8 @@
     <!-- HEADER -->
     <div class="flex flex-col md:flex-row justify-between items-center bg-slate-800 p-6 rounded-2xl border border-slate-700 shadow-xl gap-4">
       <div>
-        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Dòng Điện & Công Suất Realtime</h1>
-        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets & Terminal Log</p>
+        <h1 class="text-2xl font-bold text-teal-400">⚡ Giám Sát Dòng Điện & Công Suất Realtime (2s/lần)</h1>
+        <p class="text-slate-400 text-sm mt-1">Đề tài số 3 - Vercel Cloud Dashboard over WebSockets & Live Serial Terminal</p>
       </div>
       <div class="flex items-center gap-3">
         <span class="text-sm text-slate-400">Trạng thái ESP32-S3:</span>
@@ -73,9 +73,9 @@
       <!-- BIỂU ĐỒ SỐNG DÒNG ĐIỆN & CÔNG SUẤT REALTIME -->
       <div class="lg:col-span-2 bg-slate-800 p-6 rounded-2xl border border-slate-700 space-y-4">
         <div class="flex justify-between items-center">
-          <h2 class="text-lg font-bold text-slate-200">Đồ thị Dòng điện (A) & Công suất (W) Tải Nhỏ</h2>
+          <h2 class="text-lg font-bold text-slate-200">Đồ thị Dòng điện (A) & Công suất (W) Cập nhật 2s/lần</h2>
           <span class="text-xs text-emerald-400 bg-emerald-500/10 px-3 py-1 rounded-md border border-emerald-500/20 font-mono">
-            ⚡ Streaming Realtime 1s
+            ⚡ Streaming Realtime 2s
           </span>
         </div>
         <div class="relative h-72">
@@ -171,7 +171,7 @@
             <span class="w-3 h-3 rounded-full bg-amber-500 inline-block"></span>
             <span class="w-3 h-3 rounded-full bg-emerald-500 inline-block"></span>
           </div>
-          <span class="text-xs font-mono font-bold text-slate-300 ml-2">TERMINAL - ESP32-S3 REALTIME SERIAL LOGS</span>
+          <span class="text-xs font-mono font-bold text-slate-300 ml-2">TERMINAL - ESP32-S3 SERIAL MONITOR LOGS (2s/lần)</span>
         </div>
         <div class="flex items-center gap-3">
           <label class="flex items-center gap-1.5 text-xs text-slate-400 cursor-pointer select-none">
@@ -186,7 +186,7 @@
 
       <!-- TERMINAL CONTENT BOX -->
       <div id="terminal-body" class="p-4 font-mono text-xs h-56 overflow-y-auto terminal-scroll bg-black/90 space-y-1 text-emerald-400 leading-relaxed">
-        <div class="text-slate-500">[SYSTEM] Khởi tạo Terminal VS Code... Sẵn sàng nhận logs từ MQTT Broker.</div>
+        <div class="text-slate-500">[SYSTEM] Khởi tạo Terminal VS Code... Nhận log định kỳ 2s/lần từ ESP32-S3 qua MQTT.</div>
       </div>
     </div>
 
@@ -196,13 +196,13 @@
   <script>
     let currentState = { fan: false, led: false, auto_mode: false, peak_limit: 3.0 };
 
-    // 1. KHỞI TẠO MẢNG THỜI GIAN BAN ĐẦU
+    // 1. KHỞI TẠO MẢNG THỜI GIAN CHUẨN 2 GIÂY/MỐC
     const initialLabels = [];
     const initialPower = [];
     const initialCurrent = [];
     const nowTime = new Date();
     for (let i = 14; i >= 0; i--) {
-      const t = new Date(nowTime.getTime() - i * 1000);
+      const t = new Date(nowTime.getTime() - i * 2000);
       initialLabels.push(t.toLocaleTimeString('vi-VN'));
       initialPower.push(0.0);
       initialCurrent.push(0.0);
@@ -329,11 +329,11 @@
         updateBadge('badge-fan', data.fan);
         updateBadge('badge-led', data.led);
 
-        // IN LOG RA VS CODE TERMINAL DƯỚI BẢNG WEB
-        const logMsg = `[#${data.msg_id || 0}] Dòng RMS = ${data.current.toFixed(2)}A | Power = ${data.power.toFixed(2)}W | Raw ADC = ${data.raw_adc || '--'} | Vol = ${(data.voltage || 0).toFixed(2)}V | Fan: ${data.fan ? 'ON' : 'OFF'} | LED: ${data.led ? 'ON' : 'OFF'} | Mode: ${data.auto_mode ? 'AUTO' : 'MANUAL'}`;
-        logTerminal('DATA', logMsg, 'text-cyan-300');
+        // IN LOG CHUẨN ĐỊNH KỲ 2S RA KHUNG TERMINAL VS CODE
+        const logMsg = `[#${data.msg_id || 0}] ADC Pin1: ${data.raw_adc || '--'} | Vol: ${(data.voltage || 0).toFixed(2)}V | Dòng RMS: ${data.current.toFixed(2)} A | Công suất: ${data.power.toFixed(2)} W | Quạt: ${data.fan ? 'ON' : 'OFF'} | Đèn: ${data.led ? 'ON' : 'OFF'} | Mode: ${data.auto_mode ? 'AUTO' : 'MANUAL'}`;
+        logTerminal('SERIAL LOG (2s)', logMsg, 'text-cyan-300');
 
-        // ĐẨY DỮ LIỆU VÀO CẢ 2 ĐƯỜNG BIỂU ĐỒ (SỬA CHUẨN MẢNG DATASETS)
+        // ĐẨY DỮ LIỆU CẬP NHẬT ĐỒ THỊ MỖI 2 GIÂY
         pushDataToChart(data.power, data.current);
       }
     });
@@ -345,13 +345,13 @@
       // Giữ 20 mốc thời gian gần nhất
       if (chart.data.labels.length >= 20) {
         chart.data.labels.shift();
-        chart.data.datasets.data.shift(); // SỬA CHUẨN: Xóa điểm Công suất (Dataset 0)
-        chart.data.datasets[1].data.shift(); // SỬA CHUẨN: Xóa điểm Dòng điện (Dataset 1)
+        chart.data.datasets.data.shift(); // Xóa điểm Công suất (Dataset 0)
+        chart.data.datasets[2].data.shift(); // Xóa điểm Dòng điện (Dataset 1)
       }
       
       chart.data.labels.push(now);
-      chart.data.datasets.data.push(powerVal);   // SỬA CHUẨN: Thêm điểm Công suất (Dataset 0)
-      chart.data.datasets[1].data.push(currentVal); // SỬA CHUẨN: Thêm điểm Dòng điện (Dataset 1)
+      chart.data.datasets.data.push(powerVal);   // Thêm điểm Công suất (Dataset 0)
+      chart.data.datasets[2].data.push(currentVal); // Thêm điểm Dòng điện (Dataset 1)
       
       chart.update('none'); // VẼ LẠI KHUNG HÌNH TỨC THÌ MƯỢT MÀ
     }
@@ -402,7 +402,7 @@
       
       term.appendChild(line);
 
-      // Giới hạn mảng tối đa 120 dòng log để tránh tràn bộ nhớ trình duyệt
+      // Giới hạn mảng tối đa 120 dòng log để tránh tràn bộ nhớ
       while (term.children.length > 120) {
         term.removeChild(term.firstChild);
       }
