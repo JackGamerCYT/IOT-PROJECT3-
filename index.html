@@ -142,7 +142,7 @@
       }
     });
 
-    // 2. KẾT NỐI MQTT OVER WEBSOCKETS SECURE (WSS) ĐẾN HIVEMQ CLOUD
+    // 2. KẾT NỐI MQTT OVER WEBSOCKETS SECURE (WSS) ĐẾN HIVEMQ PUBLIC
     const client = mqtt.connect('wss://broker.hivemq.com:8884/mqtt', {
       clientId: 'Vercel_Dashboard_Client_' + Math.random().toString(16).substr(2, 8)
     });
