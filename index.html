@@ -196,8 +196,11 @@
 // ==================================================================================
 const DEVICE_ID = 'node9988';
 const TOPIC = `smartenergy/${DEVICE_ID}`;
-// Sau khi deploy backend lên Render, dán URL vào đây (ví dụ 'https://smart-energy-backend.onrender.com')
-const DEFAULT_API = '';
+// Backend đã deploy trên Render (không có dấu / ở cuối)
+const DEFAULT_API = 'https://smart-energy-backend-rrvs.onrender.com';
+// API_KEY đã đặt trong Environment của Render. Repo công khai nên khoá này ai cũng đọc được:
+// muốn riêng tư thì xoá dòng dưới và nhập khoá trong ô "API Key" trên giao diện.
+const DEFAULT_API_KEY = 'hoan24119038-energy';
 const BROKER_WSS = new URLSearchParams(location.search).get('broker') || 'wss://broker.hivemq.com:8884/mqtt';
 const RT_POINTS = 150;            // 150 × 2 s = 5 phút
 const ACK_TIMEOUT_MS = 5000;
@@ -540,7 +543,7 @@ function renderExp() {
 // ==================================================================================
 async function api(path, opts) {
   if (!S.api && S.api !== '') throw new Error('chưa cấu hình backend');
-  const key = store.get('apiKey', '');
+  const key = store.get('apiKey', '') || DEFAULT_API_KEY;
   const headers = { 'Content-Type': 'application/json', ...(key ? { 'X-API-Key': key } : {}) };
   const r = await fetch(S.api + path, { ...opts, headers });
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`);
@@ -567,7 +570,7 @@ async function detectApi() {
   if (S.apiOk) { log('API', `Backend: ${S.api || location.origin}`, 'text-emerald-400'); loadBackend(); }
   else { log('API', 'Không kết nối được backend – realtime vẫn chạy qua MQTT, lịch sử bị tắt', 'text-amber-400'); $('h-msg').textContent = 'Backend chưa chạy: mở http://localhost:8000 sau khi chạy python backend/main.py'; }
 }
-$('s-key').value = store.get('apiKey', '');
+$('s-key').value = store.get('apiKey', '') || DEFAULT_API_KEY;
 $('s-key-save').onclick = () => { store.set('apiKey', $('s-key').value.trim()); log('API', 'Đã lưu API key'); };
 $('s-api-save').onclick = () => { store.set('apiBase', $('s-api').value.trim().replace(/\/$/, '')); location.search = '?api=' + encodeURIComponent($('s-api').value.trim()); };
 
