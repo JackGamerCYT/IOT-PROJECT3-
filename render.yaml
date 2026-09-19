@@ -1,0 +1,29 @@
+# Render Blueprint - deploy backend (MQTT ingest + REST API) chạy 24/7
+# Render Dashboard -> New -> Blueprint -> chọn repo này.
+# DATABASE_URL và API_KEY để sync:false => nhập thủ công trong tab Environment.
+services:
+  - type: web
+    name: smart-energy-backend
+    runtime: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: DATABASE_URL      # chuỗi kết nối Neon, nhớ có ?sslmode=require
+        sync: false
+      - key: API_KEY           # chuỗi ngẫu nhiên tự đặt, dashboard phải gửi kèm khi POST/PUT
+        sync: false
+      - key: MQTT_HOST
+        value: broker.hivemq.com
+      - key: MQTT_PORT
+        value: "1883"
+      - key: DEVICE_ID
+        value: node9988
+      - key: TZ_OFFSET_H
+        value: "7"
+      - key: RETENTION_DAYS
+        value: "60"
