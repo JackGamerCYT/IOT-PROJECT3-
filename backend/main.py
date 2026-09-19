@@ -185,10 +185,12 @@ def on_message(client, userdata, msg):
         data = json.loads(raw)
         if kind == "telemetry":
             vals = [int(v) if isinstance(v, bool) else v for v in (data.get(c) for c in TEL_COLS)]
+            # Gói gửi bù sau khi mất mạng: lấy mốc thời gian của thiết bị làm ts_server
+            ts_row = int(data["ts"]) if data.get("buffered") and data.get("ts") else ts
             exec_(f"INSERT INTO telemetry(dev,ts_device,ts_server,seq,{','.join(TEL_COLS)}) "
                   f"VALUES(?,?,?,?,{','.join('?' * len(TEL_COLS))})",
-                  (data.get("dev"), data.get("ts") or None, ts, data.get("seq"), *vals))
-            if live["status"] != "online":
+                  (data.get("dev"), data.get("ts") or None, ts_row, data.get("seq"), *vals))
+            if not data.get("buffered") and live["status"] != "online":
                 live.update(status="online", status_ts=ts)
         elif kind == "state":
             live["state"] = data
@@ -453,6 +455,180 @@ def export_csv(table: str, minutes: int = Query(1440, ge=1, le=525600)):
         w.writerows(rows)
     return StreamingResponse(iter([buf.getvalue()]), media_type="text/csv",
                              headers={"Content-Disposition": f"attachment; filename={table}.csv"})
+
+
+
+# ----------------------------------------------------------------------------------
+# Chatbot offline: phân loại ý định -> truy vấn SQL -> trả lời từ số liệu thật
+# Không dùng LLM nên không bao giờ bịa số; mọi câu trả lời kèm SQL đã chạy.
+# ----------------------------------------------------------------------------------
+import re
+import unicodedata
+
+
+def _norm(t: str) -> str:
+    t = unicodedata.normalize("NFD", t.lower().replace("đ", "d").replace("Đ", "d"))
+    return "".join(c for c in t if unicodedata.category(c) != "Mn")
+
+
+def _range(t: str):
+    now = datetime.now(TZ)
+    if re.search(r"hom qua|yesterday", t):
+        s = day_start_ms(now - timedelta(days=1))
+        return s, s + 86_400_000, "hôm qua"
+    if re.search(r"7 ngay|tuan|week", t):
+        return day_start_ms(now - timedelta(days=6)), now_ms(), "7 ngày qua"
+    if re.search(r"30 ngay|thang|month", t):
+        return day_start_ms(now - timedelta(days=29)), now_ms(), "30 ngày qua"
+    if re.search(r"gio qua|1 gio|60 phut|hour", t):
+        return now_ms() - 3_600_000, now_ms(), "1 giờ qua"
+    return day_start_ms(now), now_ms(), "hôm nay"
+
+
+def _rows(a, b):
+    return q("SELECT ts_server, power_w, peak_limit_w, led, fan FROM telemetry "
+             "WHERE ts_server BETWEEN ? AND ? ORDER BY ts_server", (a, b))
+
+
+def _tariff():
+    return float(get_setting("tariff_vnd_per_kwh", 3000))
+
+
+def chat_answer(question: str) -> dict:
+    t = _norm(question.strip())
+    a, b, label = _range(t)
+    tariff = _tariff()
+
+    # --- 1. Lệnh điều khiển: trả về action để người dùng bấm xác nhận ---
+    on = bool(re.search(r"\bbat\b|\bmo\b|turn on|\bon\b", t))
+    off = bool(re.search(r"\btat\b|\bngat\b|turn off|\boff\b", t))
+    if on or off:
+        if re.search(r"quat|fan", t):
+            return {"answer": f"Bạn muốn {'BẬT' if on else 'TẮT'} quạt 12V? Bấm xác nhận để gửi lệnh.",
+                    "action": {"fan": on}, "data": {}}
+        if re.search(r"den|led", t):
+            return {"answer": f"Bạn muốn {'BẬT' if on else 'TẮT'} đèn LED? Bấm xác nhận để gửi lệnh.",
+                    "action": {"led": on}, "data": {}}
+        if re.search(r"tu dong|auto", t):
+            return {"answer": f"Bạn muốn {'BẬT' if on else 'TẮT'} chế độ tự động sa thải tải?",
+                    "action": {"auto_mode": on}, "data": {}}
+    m = re.search(r"(nguong|limit|peak)\D{0,12}(\d+(?:[.,]\d+)?)", t)
+    if m:
+        v = float(m.group(2).replace(",", "."))
+        return {"answer": f"Đặt ngưỡng công suất đỉnh thành {v} W?", "action": {"peak_limit_w": v}, "data": {}}
+    m = re.search(r"(ngan sach|budget)\D{0,12}(\d+(?:[.,]\d+)?)", t)
+    if m:
+        v = float(m.group(2).replace(",", "."))
+        return {"answer": f"Đặt ngân sách điện năng {v} Wh/ngày?", "action": {"budget_wh": v}, "data": {}}
+
+    # --- 2. Trạng thái hiện tại ---
+    if re.search(r"hien tai|bay gio|dang chay|status|trang thai|the nao", t):
+        st = status()
+        l = st["latest"]
+        if not l:
+            return {"answer": "Chưa có dữ liệu nào trong database.", "data": {}, "action": None}
+        return {"answer": (f"Thiết bị {st['availability'].upper()}, dữ liệu cách đây {st['data_age_s']:.0f} s. "
+                           f"Công suất {l['power_w']:.2f} W / ngưỡng {l['peak_limit_w']:.1f} W, "
+                           f"dòng {l['current_a']:.3f} A. Quạt {'BẬT' if l['fan'] else 'TẮT'}, "
+                           f"đèn {'BẬT' if l['led'] else 'TẮT'}"
+                           + (f" (bị cắt do {l['led_shed']})" if l['led_shed'] not in (None, 'NONE') else "")
+                           + f". Chế độ {'AUTO' if l['auto_mode'] else 'MANUAL'}"
+                           + (" (SAFE MODE)" if l['safe_mode'] else "") + "."),
+                "data": l, "action": None}
+
+    # --- 3. Đỉnh công suất ---
+    if re.search(r"dinh|peak|cao nhat|max", t):
+        rows = _rows(a, b)
+        if not rows:
+            return {"answer": f"Không có dữ liệu {label}.", "data": {}, "action": None}
+        top = max(rows, key=lambda r: r["power_w"] or 0)
+        return {"answer": (f"Đỉnh công suất {label} là {top['power_w']:.2f} W lúc "
+                           f"{datetime.fromtimestamp(top['ts_server'] / 1000, TZ):%H:%M:%S %d/%m}."),
+                "data": {"peak_w": top["power_w"], "ts": top["ts_server"]}, "action": None}
+
+    # --- 4. Sa thải tải / sự kiện ---
+    if re.search(r"sa thai|cat tai|shed|su kien|event|canh bao|alarm|bao nhieu lan", t):
+        ev = q("SELECT type, COUNT(*) AS n FROM events WHERE ts_server BETWEEN ? AND ? GROUP BY type ORDER BY 2 DESC", (a, b))
+        if not ev:
+            return {"answer": f"Không có sự kiện nào {label}.", "data": {}, "action": None}
+        last = q("SELECT * FROM events WHERE ts_server BETWEEN ? AND ? ORDER BY ts_server DESC LIMIT 1", (a, b), one=True)
+        txt = ", ".join(f"{e['type']}: {e['n']} lần" for e in ev)
+        return {"answer": (f"{label.capitalize()} có {sum(e['n'] for e in ev)} sự kiện — {txt}. "
+                           f"Gần nhất: {last['type']} lúc {datetime.fromtimestamp(last['ts_server'] / 1000, TZ):%H:%M:%S} "
+                           f"({last['detail']}, P={last['power_w']:.2f} W)."),
+                "data": {"by_type": ev}, "action": None}
+
+    # --- 5. Mất kết nối ---
+    if re.search(r"offline|mat ket noi|mat mang|online|ket noi", t):
+        av = q("SELECT * FROM availability WHERE ts_server BETWEEN ? AND ? ORDER BY ts_server DESC LIMIT 10", (a, b))
+        n_off = sum(1 for r in av if r["status"] == "offline")
+        if not av:
+            return {"answer": f"Không ghi nhận thay đổi kết nối nào {label}.", "data": {}, "action": None}
+        return {"answer": (f"{label.capitalize()} có {n_off} lần thiết bị OFFLINE. Gần nhất: "
+                           f"{av[0]['status'].upper()} lúc {datetime.fromtimestamp(av[0]['ts_server'] / 1000, TZ):%H:%M:%S %d/%m}."),
+                "data": {"log": av}, "action": None}
+
+    # --- 6. Lệnh điều khiển đã gửi ---
+    if re.search(r"lenh|command|dieu khien gan day|ai bat|ai tat", t):
+        c = q("SELECT * FROM commands WHERE COALESCE(ts_seen_server, ts_client) BETWEEN ? AND ? "
+              "ORDER BY COALESCE(ts_seen_server, ts_client) DESC LIMIT 5", (a, b))
+        if not c:
+            return {"answer": f"Không có lệnh nào {label}.", "data": {}, "action": None}
+        lat = [x["latency_ms"] for x in c if x["latency_ms"] is not None]
+        lines = "; ".join(f"{datetime.fromtimestamp((x['ts_seen_server'] or x['ts_client']) / 1000, TZ):%H:%M:%S} "
+                          f"{json.loads(x['payload']).get('src', '?')}: "
+                          f"{ {k: v for k, v in json.loads(x['payload']).items() if k not in ('cmd_id', 'ts', 'src')} }"
+                          for x in c)
+        return {"answer": (f"{len(c)} lệnh gần nhất {label}: {lines}."
+                           + (f" Độ trễ xác nhận trung bình {sum(lat) / len(lat):.0f} ms." if lat else "")),
+                "data": {"commands": c}, "action": None}
+
+    # --- 7. So sánh theo ngày ---
+    if re.search(r"moi ngay|theo ngay|so sanh|bieu do ngay", t):
+        d = energy_daily(7)
+        txt = ", ".join(f"{x['date'][5:]}: {x['energy_wh']:.1f} Wh" for x in d)
+        return {"answer": f"Điện năng 7 ngày gần nhất — {txt}.", "data": {"daily": d}, "action": None}
+
+    # --- 8. Điện năng / tiền điện (mặc định) ---
+    if not re.search(r"dien|wh|kwh|tien|chi phi|cost|tieu thu|ton|nang luong|energy|cong suat|power|bao nhieu", t):
+        return {"answer": ("Mình tra cứu được dữ liệu trong database. Thử hỏi: điện năng/tiền điện theo ngày, "
+                           "đỉnh công suất, số lần sa thải tải, thiết bị offline lúc nào, lệnh điều khiển gần đây, "
+                           "trạng thái hiện tại. Hoặc ra lệnh: 'bật quạt', 'tắt đèn', 'đặt ngưỡng 3.5 W'."),
+                "data": {}, "action": None}
+    rows = _rows(a, b)
+    if True:
+        if not rows:
+            return {"answer": f"Chưa có dữ liệu {label}. Backend chỉ ghi được khi ESP32 đang gửi telemetry.",
+                    "data": {}, "action": None}
+        wh = integrate_wh(rows)
+        peak = max((r["power_w"] or 0) for r in rows)
+        avg = sum(r["power_w"] or 0 for r in rows) / len(rows)
+        hours = (rows[-1]["ts_server"] - rows[0]["ts_server"]) / 3_600_000
+        return {"answer": (f"{label.capitalize()}: tiêu thụ {wh:.3f} Wh ({wh / 1000:.5f} kWh) "
+                           f"≈ {wh / 1000 * tariff:,.0f} đ với đơn giá {tariff:,.0f} đ/kWh. "
+                           f"Công suất trung bình {avg:.2f} W, đỉnh {peak:.2f} W, "
+                           f"đo trong {hours:.1f} giờ ({len(rows)} mẫu)."),
+                "data": {"energy_wh": round(wh, 4), "cost_vnd": round(wh / 1000 * tariff, 1),
+                         "peak_w": peak, "avg_w": round(avg, 3), "samples": len(rows)},
+                "action": None}
+
+
+class ChatIn(BaseModel):
+    question: str = Field(..., min_length=1, max_length=300)
+
+
+@app.post("/api/chat")
+def chat(inp: ChatIn):
+    """Chatbot tra cứu dữ liệu. Lệnh điều khiển trả về 'action' để người dùng bấm xác nhận
+    (dashboard sẽ gọi /api/command), chatbot không tự đóng cắt relay."""
+    try:
+        r = chat_answer(inp.question)
+    except Exception as e:
+        raise HTTPException(500, f"Lỗi xử lý câu hỏi: {e}")
+    r["question"] = inp.question
+    r["hint"] = ("Thử: 'hôm nay dùng bao nhiêu điện', 'tiền điện 7 ngày qua', 'đỉnh công suất hôm nay', "
+                 "'sa thải mấy lần', 'thiết bị offline lúc nào', 'lệnh gần đây', 'bật quạt', 'đặt ngưỡng 3.5 W'")
+    return r
 
 
 if __name__ == "__main__":

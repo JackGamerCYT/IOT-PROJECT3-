@@ -93,5 +93,6 @@ while True:
         "energy_today_wh": round(e_today, 4), "energy_total_wh": round(e_total, 3), "peak_today_w": round(peak, 3),
         **{k: s[k] for k in ("fan", "led", "led_shed", "auto_mode", "safe_mode", "peak_limit_w", "hysteresis_w", "budget_wh")},
         "led_est_w": led_est, "alarm_over": False, "alarm_budget": False,
-        "sensor_mv": round(2500 + i * 185, 1), "zero_mv": 2500.0, "rssi": -55, "uptime_s": seq * 2}))
+        "sensor_mv": round(2500 + i * 185, 1), "zero_mv": 2500.0, "rssi": -55, "uptime_s": seq * 2,
+        "time_src": "ntp", "rtc": True, "buffered_count": 0}))
     print(f"#{seq} P={p:.2f}W fan={s['fan']} led={s['led']} auto={s['auto_mode']}")

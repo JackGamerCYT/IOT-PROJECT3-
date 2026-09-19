@@ -64,7 +64,8 @@
       <p class="text-xs text-slate-400 mt-1">Tổng tích lũy: <span id="k-total">--</span> Wh</p></div>
     <div class="card"><p class="lbl">Chế độ quản lý tải</p>
       <p id="k-mode" class="text-2xl font-black text-slate-300 mt-1">--</p>
-      <p class="text-xs text-slate-400 mt-1">LED: <span id="k-shed">--</span> · P<sub>LED</sub>≈<span id="k-ledest">--</span> W</p></div>
+      <p class="text-xs text-slate-400 mt-1">LED: <span id="k-shed">--</span> · P<sub>LED</sub>≈<span id="k-ledest">--</span> W</p>
+      <p class="text-xs text-slate-400">Giờ: <span id="k-timesrc">--</span> · đệm <span id="k-buf">0</span> gói</p></div>
   </section>
 
   <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -122,6 +123,20 @@
       </div>
       <div id="events" class="scroll overflow-y-auto h-80 space-y-1 text-sm"></div>
     </div>
+  </section>
+
+  <!-- CHATBOT -->
+  <section class="card space-y-3">
+    <div class="flex justify-between items-center">
+      <h2 class="font-bold">🤖 Trợ lý dữ liệu</h2>
+      <span class="text-xs text-slate-400">Trả lời bằng truy vấn SQL trên database, không bịa số</span>
+    </div>
+    <div id="chat-log" class="scroll h-64 overflow-y-auto space-y-2 text-sm bg-slate-900/60 rounded-xl p-3"></div>
+    <div class="flex gap-2">
+      <input id="chat-in" type="text" placeholder="Ví dụ: hôm nay dùng bao nhiêu điện?" class="flex-1">
+      <button id="chat-send" class="btn bg-teal-600 hover:bg-teal-500">Gửi</button>
+    </div>
+    <div id="chat-quick" class="flex flex-wrap gap-1"></div>
   </section>
 
   <!-- HISTORY -->
@@ -375,6 +390,8 @@ function onTelemetry(d) {
   $('k-total').textContent = fmt(d.energy_total_wh, 2);
   $('k-seq').textContent = d.seq; $('k-rssi').textContent = d.rssi;
   $('k-ledest').textContent = fmt(d.led_est_w, 2);
+  if (d.time_src) $('k-timesrc').textContent = d.time_src === 'ntp' ? 'NTP' : d.time_src === 'rtc' ? 'RTC (DS3231)' : 'chưa đồng bộ';
+  if (d.buffered_count !== undefined) $('k-buf').textContent = d.buffered_count;
   $('k-shed').textContent = d.led_shed === 'NONE' ? 'không bị cắt' : 'bị cắt do ' + d.led_shed;
   const bud = d.budget_wh > 0;
   $('k-budget').textContent = bud ? `${fmt(d.energy_today_wh / d.budget_wh * 100, 0)}% của ${d.budget_wh} Wh` : 'tắt';
@@ -606,6 +623,58 @@ document.querySelectorAll('[data-csv]').forEach(a => a.onclick = e => {
   if (!S.apiOk) return alert('Backend chưa kết nối');
   window.open(`${S.api}/api/export/${a.dataset.csv}.csv?minutes=${Number($('x-min').value)}`, '_blank');
 });
+
+// ==================================================================================
+// CHATBOT
+// ==================================================================================
+const CHAT_QUICK = ['Hôm nay dùng bao nhiêu điện?', 'Tiền điện 7 ngày qua', 'Đỉnh công suất hôm nay',
+  'Sa thải tải mấy lần hôm nay?', 'Thiết bị offline lúc nào?', 'Lệnh điều khiển gần đây', 'Trạng thái hiện tại'];
+$('chat-quick').innerHTML = CHAT_QUICK.map(t => `<button class="tab bg-slate-800" data-q="${t}">${t}</button>`).join('');
+$('chat-quick').onclick = e => { const b = e.target.closest('button'); if (b) askChat(b.dataset.q); };
+
+function chatBubble(who, text) {
+  const wrap = document.createElement('div');
+  wrap.className = who === 'me' ? 'text-right' : '';
+  const b = document.createElement('div');
+  b.className = 'inline-block max-w-[85%] px-3 py-2 rounded-xl ' +
+    (who === 'me' ? 'bg-teal-600 text-white' : 'bg-slate-800 text-slate-200');
+  b.textContent = text;
+  wrap.appendChild(b);
+  $('chat-log').appendChild(wrap);
+  $('chat-log').scrollTop = $('chat-log').scrollHeight;
+  return wrap;
+}
+
+async function askChat(question) {
+  if (!question.trim()) return;
+  chatBubble('me', question);
+  $('chat-in').value = '';
+  if (!S.apiOk) return chatBubble('bot', 'Chưa kết nối backend nên không truy vấn được database.');
+  const wait = chatBubble('bot', '...');
+  try {
+    const r = await api('/api/chat', { method: 'POST', body: JSON.stringify({ question }) });
+    wait.remove();
+    chatBubble('bot', r.answer);
+    if (r.action) {
+      const row = document.createElement('div');
+      const btn = document.createElement('button');
+      btn.className = 'btn bg-emerald-600 hover:bg-emerald-500 text-xs mt-1';
+      btn.textContent = 'Xác nhận gửi lệnh';
+      btn.onclick = async () => {
+        btn.disabled = true;
+        try {
+          const res = await api('/api/command', { method: 'POST', body: JSON.stringify({ ...r.action, wait_ack_s: 4 }) });
+          chatBubble('bot', res.confirmed ? '✔ Thiết bị đã xác nhận thực hiện lệnh.' : '⚠️ Đã gửi nhưng chưa nhận được xác nhận từ thiết bị.');
+        } catch (e) { chatBubble('bot', '❌ Lỗi gửi lệnh: ' + e.message); }
+      };
+      row.appendChild(btn);
+      $('chat-log').appendChild(row);
+      $('chat-log').scrollTop = $('chat-log').scrollHeight;
+    }
+  } catch (e) { wait.remove(); chatBubble('bot', 'Lỗi: ' + e.message); }
+}
+$('chat-send').onclick = () => askChat($('chat-in').value);
+$('chat-in').addEventListener('keydown', e => { if (e.key === 'Enter') askChat($('chat-in').value); });
 
 // ==================================================================================
 // VÒNG LẶP 1 s: độ tươi dữ liệu
