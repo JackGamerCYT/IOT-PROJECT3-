@@ -11,7 +11,7 @@ Mở PowerShell tại thư mục repo:
 git pull
 
 # 2. Xoá các file cũ đã bị thay thế (bỏ qua nếu báo không tìm thấy)
-git rm -f index.html firmware/esp32_firmware.ino gitignore 2>$null
+git rm -rf dashboard vercel.json firmware/esp32_firmware.ino gitignore 2>$null
 
 # 3. Copy nội dung thư mục iot-p3 trong file zip vào thư mục repo, ghi đè khi được hỏi
 #    (làm bằng File Explorer, hoặc lệnh dưới đây — sửa đường dẫn nguồn cho đúng)
@@ -39,8 +39,8 @@ cd IOT-PROJECT3-
 ## Cách 3 — không dùng dòng lệnh
 
 1. Mở https://github.com/JackGamerCYT/IOT-PROJECT3-
-2. Xoá thủ công `index.html`, `firmware/esp32_firmware.ino`, `gitignore` (mở file → biểu tượng thùng rác → Commit)
-3. Bấm **Add file → Upload files**, kéo thả từng thư mục `backend`, `dashboard`, `firmware`, `tools`, `docs` và các file `README.md`, `render.yaml`, `PUSH.md`, `.gitignore`
+2. Xoá thủ công `firmware/esp32_firmware.ino`, `gitignore`, và thư mục `dashboard/` nếu còn (mở file → biểu tượng thùng rác → Commit)
+3. Bấm **Add file → Upload files**, kéo thả `index.html` và các thư mục `backend`, `firmware`, `tools`, `docs`, cùng `README.md`, `render.yaml`, `PUSH.md`, `.gitignore`
 4. Ghi commit message rồi **Commit changes**
 
 GitHub web không upload được file ẩn như `.gitignore` bằng kéo thả. Tạo nó bằng **Add file → Create new file**, gõ tên `.gitignore` rồi dán nội dung từ file trong zip.
@@ -50,8 +50,8 @@ GitHub web không upload được file ẩn như `.gitignore` bằng kéo thả.
 | Việc | Nơi làm |
 |---|---|
 | Deploy backend | Render → New → Blueprint → chọn repo → điền `DATABASE_URL`, `API_KEY` |
-| Deploy giao diện | Vercel → Add New → Project → Import repo → Root Directory = `dashboard` |
-| Nối hai bên | Sửa `const DEFAULT_API` trong `dashboard/index.html` thành URL Render, push lại |
+| Deploy giao diện | Vercel → Add New → Project → Import repo → Preset Other, Root Directory để TRỐNG |
+| Nối hai bên | Sửa `const DEFAULT_API` trong `index.html` (ở gốc repo) thành URL Render, push lại |
 | Chống ngủ | cron-job.org gọi `<url-render>/api/health` mỗi 10 phút |
 
 ## Kiểm tra trước khi nộp

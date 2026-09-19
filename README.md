@@ -26,7 +26,7 @@ Hệ thống IoT end-to-end: ESP32-S3 đo dòng DC bằng ACS712, tính công su
 | Telemetry dòng + công suất/điện năng, nêu công thức, đơn vị, tần số | Trung bình 64 mẫu/250 ms, công suất TB 2 s, tích lũy Wh | §4.1 |
 | MQTT topic có cấu trúc, QoS, availability | 6 topic, LWT retained | §5 |
 | Time-series DB + REST lịch sử/cấu hình | SQLite hoặc PostgreSQL, 5 bảng, 12 endpoint | §6, §7 |
-| Dashboard: công suất tức thời, điện năng tích lũy, lịch sử, chi phí, trạng thái tải, cảnh báo | `dashboard/index.html` | §7 |
+| Dashboard: công suất tức thời, điện năng tích lũy, lịch sử, chi phí, trạng thái tải, cảnh báo | `index.html` | §7 |
 | Quản lý tải theo ưu tiên, khôi phục khi an toàn **ổn định** | Máy trạng thái 3 điều kiện + dự báo công suất | §4.2 |
 | Phân biệt trạng thái **yêu cầu** và **đã xác nhận** | `cmd_id` → `ack`, UI hiện Yêu cầu / Xác nhận / độ trễ / timeout | §4.3 |
 | **Nâng cao**: phát hiện đỉnh, ngân sách điện năng ngày | `peak_today_w`, `ALARM_OVER_LIMIT`, `budget_wh`, `BUDGET_WARN/EXCEEDED` | §4.2 |
@@ -42,7 +42,7 @@ firmware/esp32_firmware/
 backend/
   main.py                   FastAPI + MQTT ingest + SQLite/PostgreSQL + trợ lý dữ liệu
   requirements.txt
-dashboard/index.html        Dashboard (backend phục vụ tại "/" hoặc deploy Vercel)
+index.html                  Dashboard, đặt ở GỐC repo để Vercel phục vụ ngay tại "/"
 tools/device_simulator.py   Giả lập ESP32 để test khi chưa có phần cứng
 docs/
   WIRING.md                 Sơ đồ đấu nối, an toàn, quy trình hàn
@@ -181,8 +181,8 @@ python ../tools/device_simulator.py  # tuỳ chọn: giả lập ESP32 khi chưa
 ### 9.2 Triển khai 24/7: Neon + Render + Vercel
 1. **Neon**: tạo project, copy chuỗi **pooled connection** (`...-pooler...?sslmode=require`)
 2. **Render**: New → Blueprint → chọn repo (đã có `render.yaml`) → điền `DATABASE_URL` và `API_KEY` → Apply. Mở `<url>/api/health`, phải thấy `"db":"postgres"` và `"mqtt_connected":true`
-3. **Vercel**: Add New → Project → Import repo → Root Directory = `dashboard` → Deploy
-4. Sửa `const DEFAULT_API = '...'` trong `dashboard/index.html` thành URL Render rồi push lại; dán `API_KEY` vào ô API Key trên dashboard
+3. **Vercel**: Add New → Project → Import repo → Framework Preset = Other, Root Directory để trống, Build/Output Command để trống → Deploy (file `index.html` nằm ngay ở gốc repo nên Vercel phục vụ được luôn)
+4. Sửa `const DEFAULT_API = '...'` trong `index.html` thành URL Render rồi push lại; dán `API_KEY` vào ô API Key trên dashboard
 5. **Chống ngủ**: gói free của Render tắt service sau ~15 phút không có request, kéo theo mất kết nối MQTT. Tạo job trên cron-job.org gọi `<url>/api/health` mỗi 10 phút
 
 Vì sao cần Render: Vercel chỉ chạy hàm serverless sống vài giây mỗi request, không giữ được kết nối MQTT liên tục để hứng telemetry. Kiến trúc vì vậy tách **worker ingest** (Render) khỏi **giao diện** (Vercel).

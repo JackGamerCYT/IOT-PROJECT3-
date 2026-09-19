@@ -33,7 +33,11 @@ from pydantic import BaseModel, Field
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 DB_FILE = os.getenv("DB_FILE", os.path.join(BASE_DIR, "energy_data.db"))
-DASHBOARD = os.path.join(BASE_DIR, "..", "dashboard", "index.html")
+# Dashboard nằm ở gốc repo (để Vercel phục vụ trực tiếp); vẫn hỗ trợ vị trí cũ
+DASHBOARD = next((p for p in (
+    os.path.join(BASE_DIR, "..", "index.html"),
+    os.path.join(BASE_DIR, "..", "dashboard", "index.html"),
+) if os.path.exists(p)), os.path.join(BASE_DIR, "..", "index.html"))
 
 MQTT_HOST = os.getenv("MQTT_HOST", "broker.hivemq.com")
 MQTT_PORT = int(os.getenv("MQTT_PORT", "1883"))
