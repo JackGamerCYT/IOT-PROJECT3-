@@ -1,7 +1,7 @@
 /*
  * =====================================================================================
  *  PROJECT 03 - SMART ENERGY MONITORING & INTELLIGENT LOAD MANAGEMENT
- *  Firmware v20 - ESP32-S3 (N16R8)
+ *  Firmware v21 - ESP32-S3 (N16R8)
  *
  *  v19 thêm so với v17/v18:
  *   - DS3231 (I2C): giữ giờ khi mất WiFi; NTP -> RTC khi online, RTC -> hệ thống khi offline
@@ -113,7 +113,8 @@ bool fan_on = false, led_on = false;
 int  led_shed = SHED_NONE;
 unsigned long led_switch_ms = 0;
 
-float zero_mv = 2500.0, last_mv = 0;
+float zero_mv = 2500.0, last_mv = 0, diff_mv = 0;
+unsigned long zero_track_ms = 0;
 float current_a = 0, power_w = 0, demand_w = 0;
 double sum_block_p = 0; int n_block = 0;
 double energy_today_wh = 0, energy_total_wh = 0;
@@ -335,10 +336,23 @@ void measureBlock() {
   last_block = now;
 
   last_mv = readMvAvg(SAMPLES_PER_BLOCK);
-  float i = (last_mv - zero_mv) / ACS_MV_PER_A;
+  diff_mv = last_mv - zero_mv;
+
+  // TRỊ TUYỆT ĐỐI: tải một chiều, nếu lỡ đấu ngược IP+/IP- thì vẫn đo đúng độ lớn
+  float i = fabs(diff_mv) / ACS_MV_PER_A;
   if (i < I_DEADBAND_A) i = 0;
   current_a = i;
   power_w = V_NOMINAL * current_a;
+
+  // TỰ HIỆU CHỈNH ĐIỂM 0: khi cả 2 tải đang TẮT, kéo zero_mv bám theo mức thực tế
+  // (bù trôi do đổi nguồn USB <-> LM2596, do nhiệt độ). Hằng số thời gian ~12 giây.
+  if (!fan_on && !led_on) {
+    if (!zero_track_ms) zero_track_ms = now;
+    if (now - zero_track_ms > 3000 && fabs(diff_mv) < 400)
+      zero_mv += (last_mv - zero_mv) * 0.02f;
+  } else {
+    zero_track_ms = 0;
+  }
 
   energy_today_wh += power_w * dt_h;
   energy_total_wh += power_w * dt_h;
@@ -442,14 +456,15 @@ void publishTelemetry() {
   d["led_est_w"] = serialized(String(led_est_w, 2));
   d["alarm_over"] = alarm_over; d["alarm_budget"] = alarm_budget;
   d["sensor_mv"] = serialized(String(last_mv, 1)); d["zero_mv"] = serialized(String(zero_mv, 1));
+  d["diff_mv"] = serialized(String(diff_mv, 1));
   d["rssi"] = WiFi.RSSI(); d["uptime_s"] = millis() / 1000;
   d["time_src"] = time_src; d["rtc"] = have_rtc; d["buffered_count"] = buf_count;
   bool sent = mqtt.connected();
   publishJson(T_TELEMETRY, d);
 
   char t[16]; clockStr(t, sizeof(t));
-  Serial.printf("[#%lu %s] %.1fmV I=%.3fA P=%.2fW E=%.3fWh | FAN:%s LED:%s(%s) | %s%s | MQTT:%s buf=%d\n",
-    seq, t, last_mv, current_a, demand_w, energy_today_wh, fan_on ? "ON" : "OFF", led_on ? "ON" : "OFF",
+  Serial.printf("[#%lu %s] %.1fmV (lech %+.1fmV) I=%.3fA P=%.2fW E=%.3fWh | FAN:%s LED:%s(%s) | %s%s | MQTT:%s buf=%d\n",
+    seq, t, last_mv, diff_mv, current_a, demand_w, energy_today_wh, fan_on ? "ON" : "OFF", led_on ? "ON" : "OFF",
     shedName(led_shed), auto_mode ? "AUTO" : "MANUAL", safe_mode ? " SAFE" : "",
     sent ? "DA GUI" : "CHUA GUI", buf_count);
 }
@@ -590,7 +605,7 @@ void setup() {
   day_key         = prefs.getLong("day", 0);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SMART ENERGY v20  -  IoT PROJECT 03");
+  Serial.println("  SMART ENERGY v21  -  IoT PROJECT 03");
   Serial.printf("  Device ID : %s\n", DEVICE_ID);
   Serial.printf("  Broker    : %s:%d\n", MQTT_BROKER, MQTT_PORT);
   Serial.printf("  Telemetry : %s\n", T_TELEMETRY);

@@ -434,7 +434,8 @@ function onTelemetry(d) {
   $('k-power').textContent = fmt(d.power_w);
   $('k-limit').textContent = fmt(d.peak_limit_w, 1);
   $('k-current').textContent = fmt(d.current_a, 3);
-  $('k-mv').textContent = `${fmt(d.sensor_mv, 0)} (0 = ${fmt(d.zero_mv, 0)})`;
+  $('k-mv').textContent = `${fmt(d.sensor_mv, 0)} (0 = ${fmt(d.zero_mv, 0)}` +
+    (d.diff_mv !== undefined ? `, lệch ${d.diff_mv > 0 ? '+' : ''}${fmt(d.diff_mv, 0)}` : '') + ')';
   $('k-energy').textContent = fmt(d.energy_today_wh, 3);
   $('k-cost').textContent = fmt(d.energy_today_wh / 1000 * S.tariff, 1);
   $('k-peak').textContent = fmt(d.peak_today_w);
