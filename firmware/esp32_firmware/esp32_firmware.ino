@@ -1,7 +1,7 @@
 /*
  * =====================================================================================
  *  PROJECT 03 - SMART ENERGY MONITORING & INTELLIGENT LOAD MANAGEMENT
- *  Firmware v21 - ESP32-S3 (N16R8)
+ *  Firmware v22 - ESP32-S3 (N16R8)
  *
  *  v19 thêm so với v17/v18:
  *   - DS3231 (I2C): giữ giờ khi mất WiFi; NTP -> RTC khi online, RTC -> hệ thống khi offline
@@ -21,8 +21,8 @@
 //  CHUA GAN DS3231 / OLED thi de nguyen 0 (chi can 2 thu vien PubSubClient + ArduinoJson).
 //  Khi nao gan module roi thi doi thanh 1 va cai them RTClib, Adafruit SSD1306, Adafruit GFX.
 // ======================================================
-#define USE_RTC  0
-#define USE_OLED 0
+#define USE_RTC  0     // chua gan DS3231 -> 0
+#define USE_OLED 1     // DA GAN OLED SSD1306 -> 1
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -76,7 +76,7 @@ const int PIN_RELAY_LED = 13;   // Tải 2 - LED 12V  (ưu tiên THẤP), relay 
 const int PIN_BUZZER    = 14;   // -1 nếu không lắp
 const int PIN_I2C_SDA   = 8;    // DS3231 + SSD1306 dùng chung
 const int PIN_I2C_SCL   = 9;
-const uint8_t ADDR_OLED = 0x3C;
+uint8_t addr_oled = 0x3C;      // tu do giua 0x3C va 0x3D luc khoi dong
 
 const float ACS_MV_PER_A  = 185.0;
 const float DIVIDER_RATIO = 1.0;    // 0.6667 nếu dùng phân áp 10k (trên) / 20k (dưới)
@@ -269,12 +269,35 @@ void syncRtcFromNtp() {
 // -------------------------------------------------------------------------------------
 // 7. OLED
 // -------------------------------------------------------------------------------------
+#if USE_RTC || USE_OLED
+void scanI2C() {
+  Serial.println("[I2C] Dang quet bus (SDA=GPIO8, SCL=GPIO9)...");
+  int found = 0;
+  for (uint8_t a = 1; a < 127; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) {
+      Serial.printf("[I2C]   tim thay thiet bi tai dia chi 0x%02X%s\n", a,
+                    a == 0x3C || a == 0x3D ? "  <- OLED" : a == 0x68 ? "  <- DS3231" : "");
+      found++;
+      if (a == 0x3C || a == 0x3D) addr_oled = a;
+    }
+  }
+  if (!found) Serial.println("[I2C]   KHONG THAY THIET BI NAO - kiem tra day SDA/SCL/VCC/GND");
+}
+#endif
+
 void initOLED() {
 #if USE_OLED
-  if (!oled.begin(SSD1306_SWITCHCAPVCC, ADDR_OLED)) { Serial.println("[OLED] khong tim thay SSD1306"); return; }
+  if (!oled.begin(SSD1306_SWITCHCAPVCC, addr_oled)) {
+    Serial.printf("[OLED] Khong khoi tao duoc tai 0x%02X. Kiem tra day va nguon 3V3.\n", addr_oled);
+    return;
+  }
+  Serial.printf("[OLED] San sang tai dia chi 0x%02X\n", addr_oled);
   have_oled = true;
   oled.clearDisplay(); oled.setTextColor(SSD1306_WHITE); oled.setTextSize(1);
-  oled.setCursor(0, 24); oled.println(" SMART ENERGY v19"); oled.display();
+  oled.setCursor(0, 20); oled.println("  SMART ENERGY v22");
+  oled.setCursor(0, 34); oled.println("  Dang ket noi WiFi...");
+  oled.display();
 #endif
 }
 
@@ -591,6 +614,7 @@ void setup() {
 #if USE_RTC || USE_OLED
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
   Wire.setClock(400000);
+  scanI2C();
   initRTC();
   initOLED();
 #endif
@@ -605,7 +629,7 @@ void setup() {
   day_key         = prefs.getLong("day", 0);
 
   Serial.println("\n==========================================================");
-  Serial.println("  SMART ENERGY v21  -  IoT PROJECT 03");
+  Serial.println("  SMART ENERGY v22  -  IoT PROJECT 03");
   Serial.printf("  Device ID : %s\n", DEVICE_ID);
   Serial.printf("  Broker    : %s:%d\n", MQTT_BROKER, MQTT_PORT);
   Serial.printf("  Telemetry : %s\n", T_TELEMETRY);

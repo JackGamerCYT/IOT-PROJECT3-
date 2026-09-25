@@ -62,6 +62,38 @@ const cap = (t) => new Paragraph({
   children: [new TextRun({ text: t, font: FONT, size: 22, italics: true })],
 });
 
+const path = require('path');
+const ROOT = path.join(__dirname, '..');
+
+function srcLines(file) {
+  return fs.readFileSync(path.join(ROOT, file), 'utf8').replace(/\r/g, '').split('\n');
+}
+
+/** Lấy đoạn mã giữa 2 chuỗi mốc (kể cả dòng mốc đầu), dùng để trích hàm. */
+function srcBetween(file, startMark, endMark, maxLines = 200) {
+  const L = srcLines(file);
+  const i = L.findIndex(x => x.includes(startMark));
+  if (i < 0) return ['(khong tim thay: ' + startMark + ')'];
+  let j = L.findIndex((x, k) => k > i && x.includes(endMark));
+  if (j < 0) j = Math.min(L.length, i + maxLines);
+  return L.slice(i, j + 1);
+}
+
+/** Toàn bộ file, kèm số dòng. */
+function srcAll(file) {
+  return srcLines(file).map((l, i) => String(i + 1).padStart(4, ' ') + ' | ' + l);
+}
+
+/** In khối mã dài, cỡ chữ nhỏ, tự xuống trang. */
+function codeBlock(lines, size = 14) {
+  return lines.map((l, i) => new Paragraph({
+    spacing: { after: 0, line: 200 },
+    children: [new TextRun({ text: l.replace(/\t/g, '    ') || ' ', font: 'Consolas', size })],
+  }));
+}
+
+const pageBreak = () => new Paragraph({ children: [new PageBreak()] });
+
 // ===================================================================================
 const body = [];
 const bl = (n = 1) => { for (let i = 0; i < n; i++) body.push(p('')); };
@@ -286,6 +318,19 @@ body.push(h('7.1. Trợ lý dữ liệu', HeadingLevel.HEADING_2));
 body.push(p('Trợ lý chạy hoàn toàn cục bộ trong backend. Câu hỏi được chuẩn hóa bằng cách bỏ dấu tiếng Việt, phân loại ý định bằng biểu thức chính quy, sau đó truy vấn trực tiếp cơ sở dữ liệu và ghép câu trả lời từ số liệu thật. Vì không sinh văn bản tự do nên không tồn tại nguy cơ bịa số, khác với cách gọi mô hình ngôn ngữ lớn.'));
 body.push(p('Với câu mang tính điều khiển, hệ thống không tự thực thi mà trả về mô tả hành động; giao diện hiện nút xác nhận, người dùng bấm thì lệnh mới được gửi. Đây là ràng buộc an toàn bắt buộc khi cho phép ngôn ngữ tự nhiên tác động lên relay.'));
 
+body.push(h('7.2. Mã nguồn khâu thu nhận dữ liệu ở backend', HeadingLevel.HEADING_2));
+body.push(p('Backend đăng ký toàn bộ sáu topic. Với bản tin telemetry, điểm đáng chú ý là cách xử lý gói gửi bù: gói mang cờ "buffered" sẽ dùng mốc thời gian của thiết bị làm mốc lưu trữ, nhờ đó dữ liệu ghi bù sau khi mất mạng nằm đúng vị trí trên đồ thị lịch sử thay vì dồn cục vào thời điểm nhận.'));
+body.push(...codeBlock(srcBetween('backend/main.py', 'def on_message(client, userdata, msg):',
+  'print(f"[MQTT] bad message')));
+
+body.push(h('7.3. Mã nguồn lớp truy cập cơ sở dữ liệu', HeadingLevel.HEADING_2));
+body.push(p('Lớp DB cho phép cùng một mã nguồn chạy được trên SQLite khi phát triển và PostgreSQL khi triển khai, bằng cách chuyển đổi ký hiệu tham số và cú pháp chèn có điều kiện:'));
+body.push(...codeBlock(srcBetween('backend/main.py', 'class DB:', 'def init_schema(self):')));
+
+body.push(h('7.4. Mã nguồn đồ thị thời gian thực trên trình duyệt', HeadingLevel.HEADING_2));
+body.push(p('Trình duyệt giữ một kết nối WebSocket tới broker và vẽ thêm điểm ngay khi có bản tin, không hỏi vòng máy chủ. Bộ đệm giữ theo thời gian thay vì theo số điểm, nên đổi cửa sổ hiển thị không làm sai trục hoành:'));
+body.push(...codeBlock(srcBetween('index.html', 'function rtRedraw()', '$(\'rt-pause\').onclick')));
+
 // --- 8 ---
 body.push(h('8. ĐIỀU KHIỂN VÀ TRÍ TUỆ HỆ THỐNG', HeadingLevel.HEADING_1));
 body.push(h('8.1. Thuật toán sa thải tải theo ưu tiên', HeadingLevel.HEADING_2));
@@ -314,6 +359,22 @@ body.push(p('Ngân sách điện năng ngày cho phép đặt hạn mức Wh cho
 body.push(h('8.3. Phân biệt trạng thái yêu cầu và trạng thái xác nhận', HeadingLevel.HEADING_2));
 body.push(p('Mỗi lệnh mang một cmd_id sinh ngẫu nhiên. Thiết bị áp dụng lệnh rồi publish bản tin ack chứa cmd_id cùng trạng thái thực tế của hai relay sau khi áp dụng. Giao diện hiển thị hai dòng riêng biệt, đo độ trễ bằng đồng hồ trình duyệt và báo lỗi nếu quá 5 giây chưa có xác nhận. Cơ chế này bộc lộ đúng bản chất của hệ phân tán: lệnh được gửi đi không đồng nghĩa với việc thiết bị đã thực hiện.'));
 body.push(p('Một trường hợp đáng chú ý là khi người dùng bật tải bằng tay trong lúc chế độ tự động đang hoạt động. Thiết bị chuyển sang chế độ thủ công và sinh sự kiện MANUAL_OVERRIDE, thay vì để hai cơ chế tranh chấp quyền điều khiển cùng một relay.'));
+
+body.push(h('8.4. Mã nguồn khâu đo lường', HeadingLevel.HEADING_2));
+body.push(p('Hàm dưới đây chạy 4 lần mỗi giây trên ESP32. Ba điểm kỹ thuật đáng chú ý: lấy trung bình 64 mẫu để khử nhiễu, lấy trị tuyệt đối của độ lệch để phép đo không phụ thuộc chiều đấu dây của cảm biến, và tự hiệu chỉnh điểm không khi cả hai tải đều tắt.'));
+body.push(...codeBlock(srcBetween('firmware/esp32_firmware/esp32_firmware.ino',
+  'void measureBlock()', 'sum_block_p += power_w; n_block++;')));
+body.push(p('Việc lấy trị tuyệt đối xuất phát từ một lỗi thực tế: bản đầu tiên viết "if (i < deadband) i = 0", tức là mọi giá trị âm đều bị ép về không. Khi cọc IP+ và IP− của cảm biến bị đấu ngược, điện áp ra thấp hơn mức 2.5 V nên dòng điện tính ra mang dấu âm và bị loại bỏ hoàn toàn; hệ thống báo 0 A dù tải đang chạy. Chi tiết được ghi ở chương 12.'));
+body.push(p('Cơ chế tự hiệu chỉnh điểm không giải quyết hiện tượng trôi mức tham chiếu khi đổi nguồn cấp. Thực nghiệm ghi nhận độ trôi khoảng 30 mV giữa lúc cấp nguồn bằng cổng USB và lúc cấp bằng mạch LM2596, tương đương sai số 0.17 A nếu không bù.'));
+
+body.push(h('8.5. Mã nguồn máy trạng thái quản lý tải', HeadingLevel.HEADING_2));
+body.push(...codeBlock(srcBetween('firmware/esp32_firmware/esp32_firmware.ino',
+  'void controlStep()', 'buzzer(alarm_over);')));
+
+body.push(h('8.6. Mã nguồn cơ chế xác nhận lệnh', HeadingLevel.HEADING_2));
+body.push(p('Thiết bị nhận lệnh, áp dụng, rồi phát lại bản tin xác nhận mang cùng mã lệnh và trạng thái thực tế của hai rơ-le sau khi áp dụng:'));
+body.push(...codeBlock(srcBetween('firmware/esp32_firmware/esp32_firmware.ino',
+  'void onMqtt(char* topic', 'Serial.printf("[CMD]')));
 
 // --- 9 ---
 body.push(h('9. BẢO MẬT VÀ ĐỘ TIN CẬY', HeadingLevel.HEADING_1));
@@ -407,7 +468,40 @@ body.push(h('11.5. Bàn luận', HeadingLevel.HEADING_2));
 body.push(p('Phần bàn luận cần trả lời bốn câu hỏi: sai số đo có đủ nhỏ so với ngưỡng điều khiển hay không; độ trễ đầu cuối có phù hợp với chu kỳ điều khiển 2 giây hay không; cơ chế quản lý tải giảm được bao nhiêu phần trăm thời gian vượt ngưỡng so với khi không quản lý; và hệ thống ứng xử ra sao khi mất mạng. Nếu sai số đo lớn hơn khoảng một phần mười ngưỡng, cần xem lại cầu phân áp, chất lượng nguồn 5 V và việc hiệu chuẩn điểm không.'));
 
 // --- 12 ---
-body.push(h('12. HẠN CHẾ', HeadingLevel.HEADING_1));
+body.push(h('12. QUÁ TRÌNH PHÁT TRIỂN VÀ CÁC LỖI ĐÃ KHẮC PHỤC', HeadingLevel.HEADING_1));
+body.push(p('Hệ thống trải qua nhiều vòng sửa lỗi. Phần này ghi lại các lỗi có giá trị kỹ thuật, vì chúng minh hoạ đúng những cái bẫy đặc trưng của một hệ IoT nhiều tầng: lỗi không nằm ở một chỗ mà ẩn ở ranh giới giữa các tầng.'));
+body.push(table([
+  ['Lỗi', 'Biểu hiện', 'Nguyên nhân', 'Cách khắc phục'],
+  ['Đồ thị không vẽ', 'Các ô số liệu cập nhật nhưng đường đồ thị đứng yên ở 0',
+   'Viết chart.data.datasets.data thay vì datasets[0].data; ngoại lệ bị khối try/catch nuốt mất',
+   'Sửa chỉ số mảng, chuyển sang bộ đệm theo thời gian'],
+  ['Dòng điện luôn bằng 0', 'Tải chạy thật nhưng công suất báo 0 W',
+   'Câu lệnh kẹp giá trị âm về 0; khi cọc IP+/IP− đấu ngược thì toàn bộ số đo bị loại',
+   'Lấy trị tuyệt đối của độ lệch điện áp'],
+  ['Điểm không bị trôi', 'Cảm biến 2499 mV trong khi điểm không lưu là 2530 mV',
+   'Mức tham chiếu đổi khi chuyển từ nguồn USB sang nguồn LM2596',
+   'Tự hiệu chỉnh điểm không khi cả hai tải tắt, hằng số thời gian 12 giây'],
+  ['Mất mạng thì ngừng bảo vệ', 'Khi rớt broker, thiết bị ngừng cắt tải',
+   'Thủ tục kết nối lại dùng vòng lặp chặn kèm delay, khoá luôn vòng điều khiển',
+   'Kết nối lại không chặn; tách vòng điều khiển khỏi tác vụ mạng'],
+  ['Tính dòng sai về bản chất', 'Số đo cao hơn thực tế khi tải nhỏ',
+   'Áp dụng công thức hiệu dụng cho tải một chiều nên nhiễu cộng theo bình phương',
+   'Dùng trung bình mẫu, đúng với tải một chiều'],
+  ['Web và thiết bị không gặp nhau', 'Cả hai đều báo kết nối broker thành công nhưng không có dữ liệu',
+   'Cây topic cũ dùng dấu gạch dưới, bản mới dùng dấu gạch chéo',
+   'Thống nhất một cây topic, in tên topic ra Serial để đối chiếu'],
+  ['Trang web báo 404', 'Trang triển khai không mở được',
+   'Tệp giao diện nằm trong thư mục con, nền tảng tìm tệp ở thư mục gốc',
+   'Đưa tệp giao diện ra thư mục gốc kho mã'],
+  ['Đóng cắt liên tục', 'Tải phụ bật tắt dồn dập quanh ngưỡng',
+   'Một ngưỡng duy nhất, khôi phục xong lại vượt ngưỡng ngay',
+   'Ba điều kiện đồng thời: dải trễ, thời gian tối thiểu, dự báo công suất sau khôi phục'],
+], [16, 22, 32, 30]));
+body.push(cap('Bảng 12.1. Các lỗi đã phát hiện và cách khắc phục'));
+body.push(p('Bài học rút ra: ở hệ phân tán, một tầng báo "thành công" không có nghĩa là hệ thống chạy đúng. Thiết bị báo gửi thành công, trình duyệt báo kết nối thành công, nhưng nếu hai bên dùng hai tên topic khác nhau thì dữ liệu vẫn không bao giờ gặp nhau. Vì vậy nhóm bổ sung các điểm quan sát ở từng tầng: tên topic in ra cổng nối tiếp, ô độ tươi dữ liệu trên giao diện, endpoint trạng thái của backend, và truy vấn trực tiếp cơ sở dữ liệu.'));
+body.push(pageBreak());
+
+body.push(h('13. HẠN CHẾ', HeadingLevel.HEADING_1));
 body.push(...bullets([
   'Broker MQTT công cộng không có xác thực; bất kỳ ai biết tên topic đều có thể đọc dữ liệu và gửi lệnh.',
   'Điện áp được giả định cố định 12 V thay vì đo trực tiếp, nên sai số của công suất phụ thuộc vào độ ổn định của nguồn.',
@@ -419,13 +513,13 @@ body.push(...bullets([
 ]));
 
 // --- 13 ---
-body.push(h('13. KẾT LUẬN', HeadingLevel.HEADING_1));
+body.push(h('14. KẾT LUẬN', HeadingLevel.HEADING_1));
 body.push(p('Đồ án đã xây dựng hoàn chỉnh một hệ thống IoT giám sát điện năng và quản lý tải thông minh, chạy thông suốt từ cảm biến đến giao diện web. Hệ thống đo dòng và công suất với quy trình hiệu chuẩn rõ ràng, truyền số liệu qua MQTT có cấu trúc topic và cơ chế phát hiện trạng thái sẵn sàng, lưu lịch sử vào cơ sở dữ liệu chuỗi thời gian kèm REST API, đồng thời cung cấp dashboard thời gian thực có phân biệt trạng thái yêu cầu và trạng thái đã xác nhận.'));
 body.push(p('Đóng góp đáng kể nhất về mặt kỹ thuật nằm ở phần điều khiển và độ tin cậy. Cơ chế khôi phục tải dựa trên ba điều kiện đồng thời, trong đó có bước dự báo công suất sau khôi phục, giải quyết triệt để hiện tượng đóng cắt liên tục mà một ngưỡng đơn thuần không xử lý được. Thiết kế tách biệt vòng điều khiển cục bộ khỏi tác vụ mạng, kết hợp đồng hồ thời gian thực và bộ đệm gửi bù, giúp hệ thống giữ được cả chức năng an toàn lẫn tính toàn vẹn dữ liệu khi mất kết nối.'));
 body.push(p('Hướng phát triển tiếp theo: chuyển sang broker có xác thực và mã hóa TLS; thay ACS712 bằng INA226 để đo cả điện áp và dòng với độ phân giải cao hơn; mở rộng thành nhiều node đo với khả năng điều phối tải giữa các node; bổ sung dự báo phụ tải ngắn hạn để sa thải chủ động trước khi vượt ngưỡng thay vì phản ứng sau.'));
 
 // --- 14 ---
-body.push(h('14. TÀI LIỆU THAM KHẢO', HeadingLevel.HEADING_1));
+body.push(h('15. TÀI LIỆU THAM KHẢO', HeadingLevel.HEADING_1));
 body.push(...[
   '[1] Allegro MicroSystems, "ACS712: Fully Integrated, Hall Effect-Based Linear Current Sensor IC", Datasheet, Rev. 18.',
   '[2] Espressif Systems, "ESP32-S3 Technical Reference Manual", 2024.',
@@ -446,7 +540,7 @@ body.push(...[
 })));
 
 // --- 15 ---
-body.push(h('15. PHÂN CÔNG THÀNH VIÊN', HeadingLevel.HEADING_1));
+body.push(h('16. PHÂN CÔNG THÀNH VIÊN', HeadingLevel.HEADING_1));
 body.push(table([
   ['STT', 'Họ và tên', 'MSSV', 'Nhiệm vụ', 'Tỉ lệ đóng góp'],
   ['1', 'Đặng Đình Mạnh', '24119055', 'Thiết kế mạch, firmware ESP32-S3, thuật toán quản lý tải', ''],
@@ -454,8 +548,68 @@ body.push(table([
   ['3', '', '', 'Dashboard web, trợ lý dữ liệu, giao diện người dùng', ''],
   ['4', '', '', 'Thực nghiệm, đo sai số và độ trễ, viết báo cáo', ''],
 ], [8, 26, 16, 36, 14]));
-body.push(cap('Bảng 15.1. Phân công nhiệm vụ'));
+body.push(cap('Bảng 16.1. Phân công nhiệm vụ'));
 body.push(p('Mã nguồn đầy đủ: https://github.com/JackGamerCYT/IOT-PROJECT3-'));
+
+// ================================ PHỤ LỤC ================================
+body.push(pageBreak());
+body.push(h('PHỤ LỤC A. MÃ NGUỒN FIRMWARE ESP32-S3 (ĐẦY ĐỦ)', HeadingLevel.HEADING_1));
+body.push(p('Tệp firmware/esp32_firmware/esp32_firmware.ino. Biên dịch bằng Arduino IDE, board ESP32S3 Dev Module, hai thư viện PubSubClient và ArduinoJson. Thông tin Wi-Fi đặt trong tệp riêng secrets.h nên không có mặt trong kho mã công khai.', { italics: true }));
+body.push(...codeBlock(srcAll('firmware/esp32_firmware/esp32_firmware.ino'), 13));
+
+body.push(pageBreak());
+body.push(h('PHỤ LỤC B. MÃ NGUỒN BACKEND (ĐẦY ĐỦ)', HeadingLevel.HEADING_1));
+body.push(p('Tệp backend/main.py. Chạy bằng FastAPI + Uvicorn, thư viện paho-mqtt và psycopg. Không đặt biến DATABASE_URL thì dùng SQLite, có đặt thì dùng PostgreSQL.', { italics: true }));
+body.push(...codeBlock(srcAll('backend/main.py'), 13));
+
+body.push(pageBreak());
+body.push(h('PHỤ LỤC C. MÃ NGUỒN TRỢ LÝ DỮ LIỆU', HeadingLevel.HEADING_1));
+body.push(p('Trích từ backend/main.py: hàm phân loại ý định và sinh câu trả lời từ truy vấn cơ sở dữ liệu.', { italics: true }));
+body.push(...codeBlock(srcBetween('backend/main.py', 'def chat_answer(question: str) -> dict:',
+  'class ChatIn(BaseModel):', 400), 13));
+
+body.push(pageBreak());
+body.push(h('PHỤ LỤC D. MÃ NGUỒN GIAO DIỆN (TRÍCH)', HeadingLevel.HEADING_1));
+body.push(p('Trích từ index.html: xử lý bản tin MQTT, gửi lệnh và đối chiếu xác nhận.', { italics: true }));
+body.push(...codeBlock(srcBetween('index.html', 'function onTelemetry(d) {', 'let configTouched', 60), 13));
+body.push(...codeBlock(srcBetween('index.html', 'function publishCmd(body, onDone)', 'window.sendLoad', 60), 13));
+
+body.push(pageBreak());
+body.push(h('PHỤ LỤC E. PHIẾU GHI SỐ LIỆU THỰC NGHIỆM', HeadingLevel.HEADING_1));
+body.push(p('In phiếu này ra để ghi tay tại chỗ, sau đó nhập lại vào chương 11.', { italics: true }));
+body.push(h('E1. Sai số phép đo dòng điện', HeadingLevel.HEADING_2));
+body.push(table([
+  ['Lần đo', 'Không tải (A)', 'Quạt (A)', 'Đèn (A)', 'Cả hai (A)', 'Đồng hồ chuẩn (A)'],
+  ...Array.from({ length: 10 }, (_, i) => [String(i + 1), '', '', '', '', '']),
+  ['Trung bình', '', '', '', '', ''],
+  ['Độ lệch chuẩn', '', '', '', '', ''],
+], [14, 18, 16, 16, 18, 18]));
+body.push(h('E2, E3. Độ trễ', HeadingLevel.HEADING_2));
+body.push(table([
+  ['Lần', 'Thiết bị → dashboard (ms)', 'Lệnh → xác nhận (ms)', 'Ghi chú'],
+  ...Array.from({ length: 10 }, (_, i) => [String(i + 1), '', '', '']),
+  ['Trung bình', '', '', ''],
+  ['Phân vị 95', '', '', ''],
+], [10, 30, 30, 30]));
+body.push(h('E4. So sánh có và không quản lý tải', HeadingLevel.HEADING_2));
+body.push(table([
+  ['Chỉ tiêu 10 phút', 'Không quản lý', 'Có quản lý', 'Chênh lệch (%)'],
+  ['Đỉnh công suất (W)', '', '', ''],
+  ['Điện năng (Wh)', '', '', ''],
+  ['Thời gian vượt ngưỡng (s)', '', '', ''],
+  ['Số lần đóng cắt', '', '', ''],
+  ['Tỉ lệ nhận gói (%)', '', '', ''],
+], [34, 22, 22, 22]));
+body.push(h('E6. Mất kết nối và khôi phục', HeadingLevel.HEADING_2));
+body.push(table([
+  ['Nội dung quan sát', 'Kết quả'],
+  ['Thời điểm ngắt mạng', ''],
+  ['Thời điểm badge chuyển OFFLINE', ''],
+  ['Hành vi cắt tải trong lúc mất mạng', ''],
+  ['Thời điểm cắm lại mạng', ''],
+  ['Số gói được gửi bù', ''],
+  ['Khoảng trống còn lại trên đồ thị (s)', ''],
+], [58, 42]));
 
 // ===================================================================================
 const doc = new Document({
