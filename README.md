@@ -48,6 +48,13 @@ docs/
   WIRING.md                 Sơ đồ đấu nối, an toàn, quy trình hàn
   BAO_CAO_IOT_PROJECT03.docx  Báo cáo đồ án 14 đề mục
   PINOUT.xlsx               Bảng chân + danh mục linh kiện
+  TRANG_THAI_TRIEN_KHAI.md  Hiện trạng deploy, cách kiểm chứng, việc còn lại
+pcb/
+  BOTTOM_mirrored_iron.pdf  Bản in 1:1 đã lật gương để ủi đồng (1 lớp, mặt dưới)
+  TOP_placement.pdf         Sơ đồ cắm linh kiện
+  smart_energy.kicad_pcb    File KiCad
+  make_pcb.py               Script sinh lại mạch in (có tự kiểm tra DRC + thông mạch)
+  README_PCB.md             Hướng dẫn ủi, khoan, hàn, đo kiểm
 render.yaml                 Cấu hình deploy backend lên Render
 PUSH.md                     Hướng dẫn đẩy code lên GitHub
 ```
@@ -178,7 +185,19 @@ python main.py                       # http://localhost:8000
 python ../tools/device_simulator.py  # tuỳ chọn: giả lập ESP32 khi chưa có mạch
 ```
 
-### 9.2 Triển khai 24/7: Neon + Render + Vercel
+### 9.2 Hiện trạng triển khai (cập nhật 23/09/2026)
+
+| Thành phần | Địa chỉ | Trạng thái |
+|---|---|---|
+| Backend + REST API | https://smart-energy-backend-rrvs.onrender.com | Đang chạy, `"db":"postgres"`, `"mqtt_connected":true` |
+| Cơ sở dữ liệu | Neon PostgreSQL (pooled, Singapore) | Đã nối, bảng tạo tự động |
+| Broker | broker.hivemq.com — TCP 1883 (thiết bị/backend), WSS 8884 (web) | Công khai, không xác thực |
+| Dashboard | Vercel, deploy từ `index.html` ở gốc repo | Đang chạy |
+| Repo | https://github.com/JackGamerCYT/IOT-PROJECT3- | — |
+
+Kiểm tra nhanh toàn tuyến: `/api/health` → `/api/status` → `/api/history?minutes=10` → `/api/export/telemetry.csv?minutes=60` → SQL Editor trên Neon.
+
+### 9.3 Các bước triển khai lại từ đầu: Neon + Render + Vercel
 1. **Neon**: tạo project, copy chuỗi **pooled connection** (`...-pooler...?sslmode=require`)
 2. **Render**: New → Blueprint → chọn repo (đã có `render.yaml`) → điền `DATABASE_URL` và `API_KEY` → Apply. Mở `<url>/api/health`, phải thấy `"db":"postgres"` và `"mqtt_connected":true`
 3. **Vercel**: Add New → Project → Import repo → Framework Preset = Other, Root Directory để trống, Build/Output Command để trống → Deploy (file `index.html` nằm ngay ở gốc repo nên Vercel phục vụ được luôn)
