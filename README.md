@@ -49,12 +49,6 @@ docs/
   BAO_CAO_IOT_PROJECT03.docx  Báo cáo đồ án 14 đề mục
   PINOUT.xlsx               Bảng chân + danh mục linh kiện
   TRANG_THAI_TRIEN_KHAI.md  Hiện trạng deploy, cách kiểm chứng, việc còn lại
-pcb/
-  BOTTOM_mirrored_iron.pdf  Bản in 1:1 đã lật gương để ủi đồng (1 lớp, mặt dưới)
-  TOP_placement.pdf         Sơ đồ cắm linh kiện
-  smart_energy.kicad_pcb    File KiCad
-  make_pcb.py               Script sinh lại mạch in (có tự kiểm tra DRC + thông mạch)
-  README_PCB.md             Hướng dẫn ủi, khoan, hàn, đo kiểm
 render.yaml                 Cấu hình deploy backend lên Render
 PUSH.md                     Hướng dẫn đẩy code lên GitHub
 ```
