@@ -71,9 +71,19 @@
   <section class="grid grid-cols-1 lg:grid-cols-3 gap-4">
     <!-- REALTIME CHART -->
     <div class="card lg:col-span-2">
-      <div class="flex justify-between items-center mb-2">
-        <h2 class="font-bold">Đồ thị thời gian thực (5 phút gần nhất)</h2>
-        <span class="text-xs font-mono text-slate-400">gói #<span id="k-seq">0</span> · RSSI <span id="k-rssi">--</span> dBm</span>
+      <div class="flex flex-wrap justify-between items-center gap-2 mb-2">
+        <h2 class="font-bold">Đồ thị thời gian thực</h2>
+        <div class="flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-slate-400">Cửa sổ</span>
+          <select id="rt-range" class="bg-slate-900 border border-slate-700 rounded px-2 py-1">
+            <option value="1">1 phút</option>
+            <option value="5" selected>5 phút</option>
+            <option value="15">15 phút</option>
+            <option value="60">60 phút</option>
+          </select>
+          <button id="rt-pause" class="btn bg-slate-700 hover:bg-slate-600 text-xs">⏸ Tạm dừng</button>
+          <span class="font-mono text-slate-400">gói #<span id="k-seq">0</span> · <span id="rt-n">0</span> điểm · RSSI <span id="k-rssi">--</span></span>
+        </div>
       </div>
       <div class="relative h-72"><canvas id="rtChart"></canvas></div>
     </div>
@@ -146,6 +156,7 @@
       <div class="flex gap-1" id="h-tabs">
         <button class="tab on" data-m="60">1 giờ</button><button class="tab" data-m="360">6 giờ</button>
         <button class="tab" data-m="1440">24 giờ</button><button class="tab" data-m="10080">7 ngày</button>
+        <button id="h-csv" class="tab bg-slate-800">⬇ CSV khoảng này</button>
       </div>
     </div>
     <p id="h-msg" class="text-xs text-slate-400"></p>
@@ -202,7 +213,8 @@ const DEFAULT_API = 'https://smart-energy-backend-rrvs.onrender.com';
 // muốn riêng tư thì xoá dòng dưới và nhập khoá trong ô "API Key" trên giao diện.
 const DEFAULT_API_KEY = 'hoan24119038-energy';
 const BROKER_WSS = new URLSearchParams(location.search).get('broker') || 'wss://broker.hivemq.com:8884/mqtt';
-const RT_POINTS = 150;            // 150 × 2 s = 5 phút
+let RT_WINDOW_MIN = 5;            // cửa sổ đồ thị realtime (phút), đổi được trên giao diện
+const RT_MAX_POINTS = 1800;       // trần an toàn cho trình duyệt
 const ACK_TIMEOUT_MS = 5000;
 const STALE_MS = 6000;
 const $ = id => document.getElementById(id);
@@ -222,7 +234,7 @@ const S = {
   api: null, apiOk: false,
   requested: { fan: null, led: null },   // {value, cmd_id, t0, status, latency}
   pending: {},                           // cmd_id -> {t0, keys, timer}
-  telLat: [], cmdLat: [], firstSeq: null, lastSeq: null, rxCount: 0, missing: 0,
+  telLat: [], cmdLat: [], firstSeq: null, lastSeq: null, rxCount: 0, missing: 0, paused: false,
 };
 
 // ==================================================================================
@@ -271,12 +283,48 @@ const rt = new Chart($('rtChart'), {
   }
 });
 
-function rtPush(t, p, limit, i) {
-  const ds = rt.data.datasets;
-  rt.data.labels.push(timeStr(t));
-  ds[0].data.push(p); ds[1].data.push(limit); ds[2].data.push(i);
-  while (rt.data.labels.length > RT_POINTS) { rt.data.labels.shift(); ds.forEach(d => d.data.shift()); }
+const rtBuf = [];                 // {t, p, lim, i} giữ theo thời gian
+
+function rtRedraw() {
+  const cut = Date.now() - RT_WINDOW_MIN * 60000;
+  while (rtBuf.length && rtBuf[0].t < cut) rtBuf.shift();
+  while (rtBuf.length > RT_MAX_POINTS) rtBuf.shift();
+  rt.data.labels = rtBuf.map(d => timeStr(d.t));
+  rt.data.datasets[0].data = rtBuf.map(d => d.p);
+  rt.data.datasets[1].data = rtBuf.map(d => d.lim);
+  rt.data.datasets[2].data = rtBuf.map(d => d.i);
   rt.update('none');
+  $('rt-n').textContent = rtBuf.length;
+}
+
+function rtPush(t, p, limit, i) {
+  rtBuf.push({ t, p, lim: limit, i });
+  if (!S.paused) rtRedraw();
+}
+
+$('rt-range').onchange = e => {
+  RT_WINDOW_MIN = Number(e.target.value);
+  rtBuf.length = 0;                                  // nạp lại từ backend cho đủ cửa sổ mới
+  if (S.apiOk) prefillChart(); else rtRedraw();
+};
+$('rt-pause').onclick = () => {
+  S.paused = !S.paused;
+  $('rt-pause').textContent = S.paused ? '▶ Tiếp tục' : '⏸ Tạm dừng';
+  $('rt-pause').className = 'btn text-xs ' + (S.paused ? 'bg-amber-600 hover:bg-amber-500'
+                                                      : 'bg-slate-700 hover:bg-slate-600');
+  if (!S.paused) rtRedraw();
+};
+
+async function prefillChart() {
+  if (!S.apiOk) return;
+  try {
+    const b = RT_WINDOW_MIN <= 5 ? 2 : RT_WINDOW_MIN <= 15 ? 4 : 10;
+    const h = await api(`/api/history?minutes=${RT_WINDOW_MIN}&bucket_s=${b}`);
+    rtBuf.length = 0;
+    h.points.forEach(p => rtBuf.push({ t: p.t, p: p.power_w, lim: p.peak_limit_w, i: p.current_a }));
+    rtRedraw();
+    log('API', `Đã nạp ${h.points.length} điểm lịch sử vào đồ thị (${RT_WINDOW_MIN} phút)`);
+  } catch (e) { log('API', 'Không nạp được lịch sử: ' + e.message, 'text-amber-400'); }
 }
 
 const hist = new Chart($('histChart'), {
@@ -521,6 +569,7 @@ function renderAlarms() {
   if (t.safe_mode) msgs.push('📴 Thiết bị đang ở SAFE MODE (mất broker) – quản lý tải cục bộ');
   if (S.lastRx && Date.now() - S.lastRx > STALE_MS) msgs.push(`⏱ Dữ liệu cũ: ${Math.round((Date.now() - S.lastRx) / 1000)} s chưa nhận telemetry`);
   if (S.devStatus === 'offline') msgs.push('🔴 ESP32 OFFLINE (LWT)');
+  if (S.paused) msgs.push('⏸ Đồ thị đang tạm dừng — dữ liệu vẫn được ghi vào database');
   const el = $('alarms');
   el.classList.toggle('hidden', !msgs.length);
   el.textContent = msgs.join('   ·   ');
@@ -578,10 +627,10 @@ async function loadBackend() {
   try {
     const st = await api('/api/settings');
     S.tariff = st.tariff_vnd_per_kwh; $('k-tariff').textContent = S.tariff; $('s-tariff').value = S.tariff;
-    const [ev, av, h] = await Promise.all([api('/api/events?limit=80'), api('/api/availability?limit=20'), api('/api/history?minutes=5&bucket_s=2')]);
+    const [ev, av] = await Promise.all([api('/api/events?limit=80'), api('/api/availability?limit=20')]);
     ev.forEach(e => addEvent(e, false, e.ts_server));
     av.forEach(a => addEvent({ type: a.status.toUpperCase(), detail: 'từ lịch sử backend' }, false, a.ts_server));
-    if (!rt.data.labels.length) h.points.forEach(p => rtPush(p.t, p.power_w, p.peak_limit_w, p.current_a));
+    await prefillChart();
     loadHistory(60);
   } catch (e) { log('API', 'Lỗi tải dữ liệu backend: ' + e.message, 'text-rose-400'); }
 }
@@ -600,7 +649,7 @@ async function loadHistory(minutes) {
     day.data.labels = days.map(d => d.date.slice(5));
     day.data.datasets[0].data = days.map(d => d.energy_wh);
     day.update();
-    $('h-msg').textContent = `${h.points.length} điểm, gộp ${h.bucket_s} s/điểm`;
+    $('h-msg').textContent = `${h.points.length} điểm, gộp ${h.bucket_s} s/điểm · tự làm mới mỗi 30 s · cập nhật lúc ${timeStr()}`;
   } catch (e) { $('h-msg').textContent = 'Lỗi: ' + e.message; }
 }
 let histMinutes = 60;
@@ -688,7 +737,11 @@ setInterval(() => {
   pill($('b-fresh'), age * 1000 > STALE_MS ? 'bad' : 'ok', age < 1.5 ? 'vừa cập nhật' : `${Math.round(age)} s trước`);
   renderAlarms();
 }, 1000);
-setInterval(() => loadHistory(histMinutes), 60000);
+setInterval(() => loadHistory(histMinutes), 30000);
+$('h-csv').onclick = () => {
+  if (!S.apiOk) return alert('Backend chưa kết nối');
+  window.open(`${S.api}/api/export/telemetry.csv?minutes=${histMinutes}`, '_blank');
+};
 
 log('SYS', 'Khởi động dashboard...', 'text-slate-500');
 detectApi();

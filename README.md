@@ -37,7 +37,7 @@ Hệ thống IoT end-to-end: ESP32-S3 đo dòng DC bằng ACS712, tính công su
 
 ```
 firmware/esp32_firmware/
-  esp32_firmware.ino        Firmware v19 (ESP32-S3 + ACS712 + relay + DS3231 + OLED)
+  esp32_firmware.ino        Firmware v20 (ESP32-S3 + ACS712 + relay; DS3231/OLED tuỳ chọn)
   secrets.example.h         Copy thành secrets.h, điền WiFi (đã .gitignore)
 backend/
   main.py                   FastAPI + MQTT ingest + SQLite/PostgreSQL + trợ lý dữ liệu
@@ -49,6 +49,7 @@ docs/
   BAO_CAO_IOT_PROJECT03.docx  Báo cáo đồ án 14 đề mục
   PINOUT.xlsx               Bảng chân + danh mục linh kiện
   TRANG_THAI_TRIEN_KHAI.md  Hiện trạng deploy, cách kiểm chứng, việc còn lại
+  KHAC_PHUC_SU_CO.md        Web không nhận dữ liệu: cách đọc Serial và tìm nguyên nhân
 render.yaml                 Cấu hình deploy backend lên Render
 PUSH.md                     Hướng dẫn đẩy code lên GitHub
 ```
@@ -66,7 +67,7 @@ PUSH.md                     Hướng dẫn đẩy code lên GitHub
 
 Chi tiết đấu nối, mạch động lực, an toàn: `docs/WIRING.md`.
 
-## 4. Firmware v19
+## 4. Firmware v20
 
 ### 4.1 Đo lường
 - Mỗi 250 ms đọc 64 mẫu `analogReadMilliVolts()` (dùng hiệu chuẩn eFuse của chip), lấy trung bình → `V_out = mV / DIVIDER_RATIO`
@@ -97,9 +98,9 @@ Web/backend publish `cmd` kèm `cmd_id`. ESP32 áp dụng, publish `ack` chứa 
 
 ### 4.5 Nạp firmware
 1. Arduino IDE, board **ESP32S3 Dev Module**
-2. Library Manager cài: `PubSubClient`, `ArduinoJson`, `RTClib`, `Adafruit SSD1306`, `Adafruit GFX Library`
+2. Library Manager cài **2 thư viện**: `PubSubClient` và `ArduinoJson`
 3. Copy `secrets.example.h` → `secrets.h`, điền WiFi
-4. Chưa lắp DS3231/OLED thì đặt `USE_RTC 0` / `USE_OLED 0` (firmware vẫn chạy đủ chức năng)
+4. Firmware mặc định `USE_RTC 0` / `USE_OLED 0` — chạy được khi **chưa gắn** DS3231 và OLED. Khi nào gắn thì đổi thành `1` và cài thêm `RTClib`, `Adafruit SSD1306`, `Adafruit GFX Library`
 5. Có lắp phân áp thì đặt `DIVIDER_RATIO = 0.6667`
 6. Upload, mở Serial 115200, **giữ 2 tải tắt** trong 1 giây đầu để calib điểm 0
 

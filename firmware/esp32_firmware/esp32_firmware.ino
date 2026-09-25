@@ -1,7 +1,7 @@
 /*
  * =====================================================================================
  *  PROJECT 03 - SMART ENERGY MONITORING & INTELLIGENT LOAD MANAGEMENT
- *  Firmware v19 - ESP32-S3 (N16R8)
+ *  Firmware v20 - ESP32-S3 (N16R8)
  *
  *  v19 thêm so với v17/v18:
  *   - DS3231 (I2C): giữ giờ khi mất WiFi; NTP -> RTC khi online, RTC -> hệ thống khi offline
@@ -16,8 +16,13 @@
  */
 
 #define ARDUINOJSON_USE_LONG_LONG 1
-#define USE_RTC  1
-#define USE_OLED 1
+
+// ======================================================
+//  CHUA GAN DS3231 / OLED thi de nguyen 0 (chi can 2 thu vien PubSubClient + ArduinoJson).
+//  Khi nao gan module roi thi doi thanh 1 va cai them RTClib, Adafruit SSD1306, Adafruit GFX.
+// ======================================================
+#define USE_RTC  0
+#define USE_OLED 0
 
 #include <WiFi.h>
 #include <PubSubClient.h>
@@ -163,6 +168,34 @@ void clockStr(char* out, size_t n) {
   if (now < 1700000000) { snprintf(out, n, "--:--:--"); return; }
   struct tm t; localtime_r(&now, &t);
   snprintf(out, n, "%02d:%02d:%02d", t.tm_hour, t.tm_min, t.tm_sec);
+}
+
+const char* mqttErr(int rc) {
+  switch (rc) {
+    case -4: return "het thoi gian cho broker tra loi";
+    case -3: return "mat ket noi mang";
+    case -2: return "KHONG KET NOI DUOC TCP (mang chan cong 1883?)";
+    case -1: return "broker tu choi / ngat ket noi";
+    case  0: return "OK";
+    case  1: return "broker khong ho tro phien ban MQTT";
+    case  2: return "client_id bi tu choi";
+    case  3: return "broker dang ban";
+    case  4: return "sai user/password";
+    case  5: return "khong duoc phep ket noi";
+    default: return "khong ro";
+  }
+}
+
+const char* wifiErr(int st) {
+  switch (st) {
+    case WL_NO_SSID_AVAIL: return "KHONG TIM THAY TEN WIFI (sai SSID?)";
+    case WL_CONNECT_FAILED: return "SAI MAT KHAU WIFI";
+    case WL_CONNECTION_LOST: return "mat song";
+    case WL_DISCONNECTED: return "dang ket noi...";
+    case WL_IDLE_STATUS: return "dang cho";
+    case WL_CONNECTED: return "da ket noi";
+    default: return "khong ro";
+  }
 }
 
 void setRelay(int pin, bool on) { digitalWrite(pin, on ? LOW : HIGH); }
@@ -411,13 +444,14 @@ void publishTelemetry() {
   d["sensor_mv"] = serialized(String(last_mv, 1)); d["zero_mv"] = serialized(String(zero_mv, 1));
   d["rssi"] = WiFi.RSSI(); d["uptime_s"] = millis() / 1000;
   d["time_src"] = time_src; d["rtc"] = have_rtc; d["buffered_count"] = buf_count;
+  bool sent = mqtt.connected();
   publishJson(T_TELEMETRY, d);
 
   char t[16]; clockStr(t, sizeof(t));
   Serial.printf("[#%lu %s] %.1fmV I=%.3fA P=%.2fW E=%.3fWh | FAN:%s LED:%s(%s) | %s%s | MQTT:%s buf=%d\n",
     seq, t, last_mv, current_a, demand_w, energy_today_wh, fan_on ? "ON" : "OFF", led_on ? "ON" : "OFF",
     shedName(led_shed), auto_mode ? "AUTO" : "MANUAL", safe_mode ? " SAFE" : "",
-    mqtt.connected() ? "ok" : "down", buf_count);
+    sent ? "DA GUI" : "CHUA GUI", buf_count);
 }
 
 // -------------------------------------------------------------------------------------
@@ -471,10 +505,21 @@ void onMqtt(char* topic, byte* payload, unsigned int len) {
 void networkTask() {
   unsigned long now = millis();
 
+  static unsigned long last_diag = 0;
+  if (!mqtt.connected() && now - last_diag > 5000) {          // nhac trang thai moi 5 giay
+    last_diag = now;
+    if (WiFi.status() != WL_CONNECTED)
+      Serial.printf("[CHAN DOAN] WiFi \"%s\": %s (ma %d)\n", WIFI_SSID,
+                    wifiErr(WiFi.status()), WiFi.status());
+    else
+      Serial.printf("[CHAN DOAN] WiFi OK, IP %s, RSSI %d dBm | MQTT chua noi duoc %s:%d\n",
+                    WiFi.localIP().toString().c_str(), WiFi.RSSI(), MQTT_BROKER, MQTT_PORT);
+  }
+
   if (WiFi.status() != WL_CONNECTED) {
     if (now - last_wifi_try > 15000) {
       last_wifi_try = now; WiFi.disconnect(); WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-      Serial.println("[NET] WiFi reconnect...");
+      Serial.println("[NET] Thu ket noi WiFi lai...");
     }
   } else if (!mqtt.connected()) {
     if (now - last_mqtt_try > 5000) {
@@ -492,9 +537,9 @@ void networkTask() {
         }
         mqtt_lost_ms = 0;
         publishState();
-        Serial.printf("[NET] MQTT connected (buf=%d)\n", buf_count);
+        Serial.printf("[NET] >>> MQTT DA KET NOI. Publish len: %s <<<\n", T_TELEMETRY);
       } else {
-        Serial.printf("[NET] MQTT fail rc=%d\n", mqtt.state());
+        Serial.printf("[NET] MQTT loi rc=%d (%s)\n", mqtt.state(), mqttErr(mqtt.state()));
       }
     }
   }
@@ -544,7 +589,18 @@ void setup() {
   energy_total_wh = prefs.getDouble("e_total", 0);
   day_key         = prefs.getLong("day", 0);
 
-  Serial.println("\n=== SMART ENERGY v19 === Giu 2 tai TAT de calib diem 0...");
+  Serial.println("\n==========================================================");
+  Serial.println("  SMART ENERGY v20  -  IoT PROJECT 03");
+  Serial.printf("  Device ID : %s\n", DEVICE_ID);
+  Serial.printf("  Broker    : %s:%d\n", MQTT_BROKER, MQTT_PORT);
+  Serial.printf("  Telemetry : %s\n", T_TELEMETRY);
+  Serial.printf("  Status    : %s\n", T_STATUS);
+  Serial.printf("  Lenh      : %s\n", T_CMD);
+  Serial.printf("  WiFi SSID : %s\n", WIFI_SSID);
+  Serial.printf("  RTC: %s | OLED: %s\n", USE_RTC ? "BAT" : "TAT", USE_OLED ? "BAT" : "TAT");
+  Serial.println("  Topic tren web PHAI trung voi dong Telemetry o tren!");
+  Serial.println("==========================================================");
+  Serial.println("Giu 2 tai TAT trong 1 giay de calib diem 0...");
   calibrateZero();
 
   uint64_t mac = ESP.getEfuseMac();
